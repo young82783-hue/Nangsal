@@ -1,0 +1,460 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Apparel catalog product item stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique product slug/identifier",
+          "maxLength": 64
+        },
+        "productId": {
+          "type": "string",
+          "description": "Canonical product identifier",
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "description": "Product display title",
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "description": "Product detailed fabric and design description",
+          "maxLength": 3000
+        },
+        "price": {
+          "type": "string",
+          "description": "Formatted price string (e.g. Rs. 1,850.00)",
+          "maxLength": 30
+        },
+        "rawPrice": {
+          "type": "number",
+          "description": "Numeric unit price for currency conversions and calculations"
+        },
+        "category": {
+          "type": "string",
+          "description": "Apparel category or collection"
+        },
+        "gender": {
+          "type": "string",
+          "description": "Gender classification",
+          "enum": ["UNISEX", "MEN", "WOMEN", "ALL"]
+        },
+        "image": {
+          "type": "string",
+          "description": "Primary display image URL",
+          "maxLength": 2048
+        },
+        "images": {
+          "type": "array",
+          "description": "List of gallery image URLs",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sizes": {
+          "type": "array",
+          "description": "All available apparel sizes for this item",
+          "items": {
+            "type": "string"
+          }
+        },
+        "availableSizes": {
+          "type": "array",
+          "description": "Active in-stock apparel sizes",
+          "items": {
+            "type": "string"
+          }
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Active / hidden visibility status on the storefront"
+        },
+        "isBestSeller": {
+          "type": "boolean",
+          "description": "Flag indicating best-seller or featured placement"
+        },
+        "inStock": {
+          "type": "boolean",
+          "description": "Overall availability status flag"
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Numerical ordering rank for storefront display"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp or ServerTimestamp when product was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp or ServerTimestamp of last update"
+        }
+      },
+      "required": ["id", "name", "price", "rawPrice", "category", "image"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "Website banner and promotional media record stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique banner identifier",
+          "maxLength": 64
+        },
+        "bannerId": {
+          "type": "string",
+          "description": "Canonical banner ID",
+          "maxLength": 64
+        },
+        "title": {
+          "type": "string",
+          "description": "Banner headline or title text",
+          "maxLength": 200
+        },
+        "subtitle": {
+          "type": "string",
+          "description": "Sub-heading or promotional tagline",
+          "maxLength": 500
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Primary banner image URL",
+          "maxLength": 2048
+        },
+        "videoUrl": {
+          "type": "string",
+          "description": "Optional direct MP4 video URL",
+          "maxLength": 2048
+        },
+        "posterUrl": {
+          "type": "string",
+          "description": "Optional video poster / fallback image URL",
+          "maxLength": 2048
+        },
+        "type": {
+          "type": "string",
+          "description": "Banner section type",
+          "enum": ["HERO", "LUXURY", "MANIFESTO", "PROMO", "ANNOUNCEMENT", "LOOKBOOK"]
+        },
+        "gender": {
+          "type": "string",
+          "description": "Target gender or collection section",
+          "enum": ["UNISEX", "MEN", "WOMEN", "ALL"]
+        },
+        "link": {
+          "type": "string",
+          "description": "Destination link or URL",
+          "maxLength": 500
+        },
+        "badge": {
+          "type": "string",
+          "description": "Optional badge text (e.g. MADE IN NEPAL)",
+          "maxLength": 100
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Active or disabled status of the banner"
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Display order sequence index"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["id", "type", "isActive"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Admin user account and permission matrix stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique admin document ID or Auth UID",
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Admin email address",
+          "maxLength": 150
+        },
+        "name": {
+          "type": "string",
+          "description": "Admin full name / display name",
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "Admin role designation",
+          "enum": ["SUPER_ADMIN", "CATALOG_MANAGER", "ORDER_MANAGER", "ADMIN"]
+        },
+        "permissions": {
+          "type": "object",
+          "description": "Detailed access control permissions"
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Active status of admin privileges"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Account registration timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last profile update timestamp"
+        }
+      },
+      "required": ["id", "role", "isActive"]
+    },
+    "Stock": {
+      "title": "Stock",
+      "description": "Independent variant stock quantity record stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Composite stock ID (e.g. productId_size)",
+          "maxLength": 128
+        },
+        "productId": {
+          "type": "string",
+          "description": "Foreign key reference to product ID",
+          "maxLength": 64
+        },
+        "productName": {
+          "type": "string",
+          "description": "Product display name for fast indexing",
+          "maxLength": 120
+        },
+        "size": {
+          "type": "string",
+          "description": "Apparel size variant (e.g. XS, S, M, L, XL, XXL)",
+          "maxLength": 20
+        },
+        "availableQuantity": {
+          "type": "number",
+          "description": "Current on-hand inventory quantity for this size"
+        },
+        "reservedQuantity": {
+          "type": "number",
+          "description": "Quantity reserved in unfulfilled orders"
+        },
+        "lowStockThreshold": {
+          "type": "number",
+          "description": "Alert threshold for low inventory warnings"
+        },
+        "sku": {
+          "type": "string",
+          "description": "Optional SKU identifier code",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last stock level modification timestamp"
+        }
+      },
+      "required": ["id", "productId", "size", "availableQuantity"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique order document identifier",
+          "maxLength": 64
+        },
+        "orderNumber": {
+          "type": "string",
+          "description": "Customer-facing formatted reference code (e.g. NANGSAL-123456)",
+          "maxLength": 32
+        },
+        "items": {
+          "type": "array",
+          "description": "Array of purchased product items with sizes, quantities, and historical prices"
+        },
+        "productIds": {
+          "type": "array",
+          "description": "List of product IDs included in the order",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selectedSizes": {
+          "type": "array",
+          "description": "List of sizes selected across all items",
+          "items": {
+            "type": "string"
+          }
+        },
+        "quantities": {
+          "type": "array",
+          "description": "List of unit quantities per item",
+          "items": {
+            "type": "number"
+          }
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Total order amount in numeric currency units"
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency code (e.g. NPR, USD, EUR, GBP)",
+          "maxLength": 10
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Customer full name",
+          "maxLength": 100
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Customer contact telephone number",
+          "maxLength": 30
+        },
+        "city": {
+          "type": "string",
+          "description": "Delivery destination city/region",
+          "maxLength": 60
+        },
+        "deliveryAddress": {
+          "type": "string",
+          "description": "Complete street and landmark address",
+          "maxLength": 300
+        },
+        "orderNotes": {
+          "type": "string",
+          "description": "Special delivery instructions",
+          "maxLength": 500
+        },
+        "paymentMethod": {
+          "type": "string",
+          "description": "Selected payment method",
+          "enum": ["BANK", "ESEWA", "COD"]
+        },
+        "transactionId": {
+          "type": "string",
+          "description": "Bank or eSewa transaction reference ID",
+          "maxLength": 100
+        },
+        "uploadedReceipt": {
+          "type": "string",
+          "description": "Optional payment screenshot URL or base64 data",
+          "maxLength": 500000
+        },
+        "status": {
+          "type": "string",
+          "description": "Order fulfillment status",
+          "enum": ["PENDING_VERIFICATION", "PROCESSING", "DISPATCHED", "DELIVERED", "CANCELLED"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Order placement timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last status modification timestamp"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Optional authenticated UID if user is signed in",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "orderNumber",
+        "fullName",
+        "phoneNumber",
+        "city",
+        "deliveryAddress",
+        "paymentMethod",
+        "totalAmount",
+        "items",
+        "status"
+      ]
+    },
+    "SiteBanner": {
+      "title": "SiteBanner",
+      "description": "Legacy unified site content container for backwards compatibility.",
+      "type": "object",
+      "properties": {
+        "heroVideoUrl": { "type": "string" },
+        "heroPosterUrl": { "type": "string" },
+        "heroType": { "type": "string" },
+        "luxuryVideoUrl": { "type": "string" },
+        "luxuryPosterUrl": { "type": "string" },
+        "luxuryHeading": { "type": "string" },
+        "luxuryTagline": { "type": "string" },
+        "luxuryParagraph1": { "type": "string" },
+        "luxuryParagraph2": { "type": "string" },
+        "luxuryBadge": { "type": "string" },
+        "manifestoHeading": { "type": "string" },
+        "manifestoTagline": { "type": "string" },
+        "photoTopLeft": { "type": "string" },
+        "photoBottomLeft": { "type": "string" },
+        "photoTopRight": { "type": "string" },
+        "photoBottomRight": { "type": "string" },
+        "announcementText": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
+      "description": "Live apparel products catalog stored in Firestore (Single source of truth)."
+    },
+    "/banners/{bannerId}": {
+      "schema": {
+        "$ref": "#/entities/Banner"
+      },
+      "description": "Website promotional banners, video heroes, and lookbook media in Firestore."
+    },
+    "/admins/{adminId}": {
+      "schema": {
+        "$ref": "#/entities/Admin"
+      },
+      "description": "Authorized administrator accounts, roles, and permission matrix."
+    },
+    "/stocks/{stockId}": {
+      "schema": {
+        "$ref": "#/entities/Stock"
+      },
+      "description": "Independent variant stock quantity records per product and size."
+    },
+    "/orders/{orderId}": {
+      "schema": {
+        "$ref": "#/entities/Order"
+      },
+      "description": "Customer purchase orders stored directly in Firestore."
+    },
+    "/site_content/{contentDoc}": {
+      "schema": {
+        "$ref": "#/entities/SiteBanner"
+      },
+      "description": "Unified dynamic site content and announcement ticker."
+    }
+  }
+}

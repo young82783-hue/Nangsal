@@ -1,0 +1,160 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // 1. Validation for Products Collection
+    function isValidProduct(data) {
+      return (data.id is string && data.id.size() <= 64) &&
+             (data.name is string && data.name.size() > 0 && data.name.size() <= 120) &&
+             (data.price is string && data.price.size() <= 30) &&
+             (data.rawPrice is number && data.rawPrice >= 0) &&
+             (data.category is string && data.category.size() <= 64) &&
+             (data.image is string && data.image.size() <= 2048) &&
+             (!('inStock' in data) || data.inStock is bool) &&
+             (!('isActive' in data) || data.isActive is bool) &&
+             (!('isBestSeller' in data) || data.isBestSeller is bool) &&
+             (!('gender' in data) || (data.gender is string && data.gender in ['UNISEX', 'MEN', 'WOMEN', 'ALL'])) &&
+             (!('sizes' in data) || (data.sizes is list && data.sizes.size() <= 20)) &&
+             (!('availableSizes' in data) || (data.availableSizes is list && data.availableSizes.size() <= 20)) &&
+             (!('images' in data) || (data.images is list && data.images.size() <= 20)) &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 3000));
+    }
+
+    // 2. Validation for Banners Collection
+    function isValidBanner(data) {
+      return (data.id is string && data.id.size() <= 64) &&
+             (data.type in ['HERO', 'LUXURY', 'MANIFESTO', 'PROMO', 'ANNOUNCEMENT', 'LOOKBOOK']) &&
+             (data.isActive is bool) &&
+             (!('title' in data) || (data.title is string && data.title.size() <= 200)) &&
+             (!('subtitle' in data) || (data.subtitle is string && data.subtitle.size() <= 500)) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 2048)) &&
+             (!('videoUrl' in data) || (data.videoUrl is string && data.videoUrl.size() <= 2048)) &&
+             (!('posterUrl' in data) || (data.posterUrl is string && data.posterUrl.size() <= 2048)) &&
+             (!('link' in data) || (data.link is string && data.link.size() <= 500)) &&
+             (!('badge' in data) || (data.badge is string && data.badge.size() <= 100)) &&
+             (!('gender' in data) || (data.gender is string && data.gender in ['UNISEX', 'MEN', 'WOMEN', 'ALL']));
+    }
+
+    // 3. Validation for Stocks Collection
+    function isValidStock(data) {
+      return (data.id is string && data.id.size() <= 128) &&
+             (data.productId is string && data.productId.size() <= 64) &&
+             (data.size is string && data.size.size() <= 20) &&
+             (data.availableQuantity is number && data.availableQuantity >= 0) &&
+             (!('reservedQuantity' in data) || (data.reservedQuantity is number && data.reservedQuantity >= 0)) &&
+             (!('lowStockThreshold' in data) || (data.lowStockThreshold is number && data.lowStockThreshold >= 0)) &&
+             (!('productName' in data) || (data.productName is string && data.productName.size() <= 120)) &&
+             (!('sku' in data) || (data.sku is string && data.sku.size() <= 64));
+    }
+
+    // 4. Validation for Orders Collection
+    function isValidOrder(data) {
+      return (data.orderNumber is string && data.orderNumber.size() <= 32) &&
+             (data.fullName is string && data.fullName.size() > 0 && data.fullName.size() <= 100) &&
+             (data.phoneNumber is string && data.phoneNumber.size() > 0 && data.phoneNumber.size() <= 30) &&
+             (data.city is string && data.city.size() > 0 && data.city.size() <= 60) &&
+             (data.deliveryAddress is string && data.deliveryAddress.size() > 0 && data.deliveryAddress.size() <= 300) &&
+             (data.paymentMethod in ['BANK', 'ESEWA', 'COD']) &&
+             (data.totalAmount is number && data.totalAmount >= 0) &&
+             (data.items is list && data.items.size() > 0 && data.items.size() <= 50) &&
+             (data.status in ['PENDING_VERIFICATION', 'PROCESSING', 'DISPATCHED', 'DELIVERED', 'CANCELLED']) &&
+             (!('currency' in data) || (data.currency is string && data.currency.size() <= 10)) &&
+             (!('orderNotes' in data) || (data.orderNotes is string && data.orderNotes.size() <= 500)) &&
+             (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() <= 100)) &&
+             (!('uploadedReceipt' in data) || (data.uploadedReceipt is string && data.uploadedReceipt.size() <= 500000)) &&
+             (!('userId' in data) || (data.userId is string && data.userId.size() <= 128));
+    }
+
+    // 5. Validation for Admin Collection
+    function isValidAdmin(data) {
+      return (data.id is string && data.id.size() <= 128) &&
+             (data.role in ['SUPER_ADMIN', 'CATALOG_MANAGER', 'ORDER_MANAGER', 'ADMIN']) &&
+             (data.isActive is bool) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
+             (!('name' in data) || (data.name is string && data.name.size() <= 100));
+    }
+
+    function isValidInquiry(data) {
+      return (data.name is string && data.name.size() > 0 && data.name.size() <= 100) &&
+             (data.contact is string && data.contact.size() > 0 && data.contact.size() <= 100) &&
+             (data.message is string && data.message.size() > 0 && data.message.size() <= 1000) &&
+             (!('topic' in data) || (data.topic is string && data.topic.size() <= 100));
+    }
+
+    // ----------------------------------------------------
+    // COLLECTION ACCESS RULES
+    // ----------------------------------------------------
+
+    // 1. PRODUCTS COLLECTION
+    match /products/{productId} {
+      allow read: if true;
+      allow create, update: if isValidId(productId) && isValidProduct(incoming());
+      allow delete: if isValidId(productId);
+    }
+
+    // 2. BANNERS COLLECTION
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow create, update: if isValidId(bannerId) && isValidBanner(incoming());
+      allow delete: if isValidId(bannerId);
+    }
+
+    // 3. STOCKS COLLECTION
+    match /stocks/{stockId} {
+      allow read: if true;
+      allow create, update: if isValidId(stockId) && isValidStock(incoming());
+      allow delete: if isValidId(stockId);
+    }
+
+    // 4. ORDERS COLLECTION
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create: if isValidId(orderId) && isValidOrder(incoming());
+      allow update: if isValidId(orderId);
+      allow delete: if false;
+    }
+
+    // 5. ADMINS COLLECTION
+    match /admins/{adminId} {
+      allow read: if true;
+      allow create, update: if isValidId(adminId) && isValidAdmin(incoming());
+      allow delete: if false;
+    }
+
+    // Unified dynamic site content container (Backwards compatibility)
+    match /site_content/{contentDoc} {
+      allow read: if true;
+      allow write: if isValidId(contentDoc);
+    }
+
+    // Concierge Support Inquiries collection
+    match /inquiries/{inquiryId} {
+      allow read: if true;
+      allow create: if isValidId(inquiryId) && isValidInquiry(incoming());
+      allow update, delete: if false;
+    }
+  }
+}
