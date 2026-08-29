@@ -60,6 +60,29 @@ export interface CustomNavButton {
   isActive: boolean;
 }
 
+export interface SiteBannerContent {
+  heroVideoUrl: string;
+  heroPosterUrl?: string;
+  heroType?: 'video' | 'image';
+  luxuryVideoUrl: string;
+  luxuryPosterUrl?: string;
+  luxuryHeading: string;
+  luxuryTagline: string;
+  luxuryParagraph1: string;
+  luxuryParagraph2: string;
+  luxuryBadge: string;
+  manifestoHeading: string;
+  manifestoTagline: string;
+  photoTopLeft: string;
+  photoBottomLeft: string;
+  photoTopRight: string;
+  photoBottomRight: string;
+  announcementText: string;
+  navButtons: CustomNavButton[];
+  updatedAt?: any;
+  version?: number | string;
+}
+
 export interface AdminPermissions {
   canManageProducts: boolean;
   canManageBanners: boolean;
@@ -76,8 +99,11 @@ export interface Admin {
   email: string;
   name: string;
   role: AdminRole;
-  permissions: AdminPermissions;
+  permissions?: AdminPermissions;
   isActive: boolean;
+  addedBy?: string;
+  addedAt?: any;
+  lastLogin?: any;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -155,26 +181,51 @@ export interface Order {
   userId?: string;
 }
 
-// Legacy Unified Site Banner Content for seamless backward compatibility
-export interface SiteBannerContent {
-  heroVideoUrl: string;
-  heroPosterUrl: string;
-  heroType: 'video' | 'image';
-  luxuryVideoUrl: string;
-  luxuryPosterUrl: string;
-  luxuryHeading: string;
-  luxuryTagline: string;
-  luxuryParagraph1: string;
-  luxuryParagraph2: string;
-  luxuryBadge: string;
-  manifestoHeading: string;
-  manifestoTagline: string;
-  photoTopLeft: string;
-  photoBottomLeft: string;
-  photoTopRight: string;
-  photoBottomRight: string;
-  announcementText: string;
-  navButtons?: CustomNavButton[];
-  version?: number | string;
+// Unified dynamic Payment Settings entity stored in Firestore
+export interface EsewaPaymentConfig {
+  enabled: boolean;
+  name: string; // e.g. "eSewa" or "eSewa / Mobile Wallet"
+  accountHolder: string; // e.g. "SUNIL GURUNG"
+  accountNumber: string; // e.g. "9847459808"
+  qrCodeUrl: string; // Direct image URL or base64 data URI
+  notes?: string;
+}
+
+export interface BankPaymentConfig {
+  enabled: boolean;
+  name: string; // e.g. "Direct Bank Transfer"
+  accountHolder: string; // e.g. "SUNIL GURUNG"
+  bankName: string; // e.g. "NABIL BANK / NIC ASIA"
+  accountNumber: string; // e.g. "0190 2841 9820 11"
+  branch?: string; // e.g. "Kathmandu Branch"
+  qrCodeUrl: string; // Direct image URL or base64 data URI
+  notes?: string;
+}
+
+export interface CodPaymentConfig {
+  enabled: boolean;
+  name: string; // e.g. "Cash on Delivery (COD)"
+  instructions: string; // e.g. "Pay with cash directly to the courier upon delivery"
+}
+
+export interface CustomPaymentMethod {
+  id: string;
+  name: string; // e.g. "Khalti / Fonepay"
+  type: string;
+  accountHolder: string;
+  accountNumber: string;
+  bankName?: string;
+  qrCodeUrl: string;
+  notes?: string;
+  enabled: boolean;
+}
+
+export interface PaymentSettings {
+  esewa: EsewaPaymentConfig;
+  bank: BankPaymentConfig;
+  cod: CodPaymentConfig;
+  customMethods?: CustomPaymentMethod[];
   updatedAt?: any;
+  updatedBy?: string;
+  version?: number | string;
 }

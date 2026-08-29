@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CartItem } from './CartDrawer';
 import { X, CheckCircle2, Copy, Check, Upload, ArrowRight, ShieldCheck, QrCode, Building2, Wallet, Loader2 } from 'lucide-react';
 import { WhatsAppIcon } from './SocialIcons';
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { deductOrderStock } from '../lib/stockManager';
+import { PaymentSettings, DEFAULT_PAYMENT_SETTINGS, subscribeToPaymentSettings } from '../lib/siteContent';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -24,6 +25,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [step, setStep] = useState<'DETAILS' | 'PAYMENT' | 'CONFIRMATION'>('DETAILS');
   const [paymentMethod, setPaymentMethod] = useState<'BANK' | 'ESEWA' | 'COD'>('BANK');
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Live Payment Settings
+  const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>(DEFAULT_PAYMENT_SETTINGS);
+  useEffect(() => {
+    const unsub = subscribeToPaymentSettings((settings) => {
+      setPaymentSettings(settings);
+    });
+    return () => unsub();
+  }, []);
 
   // Form Fields
   const [fullName, setFullName] = useState('');
@@ -333,14 +343,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
 
             {/* Payment Details Container */}
-            {paymentMethod === 'BANK' && (
+            {paymentMethod === 'BANK' && paymentSettings.bank.enabled && (
               <div className="p-4 sm:p-5 bg-[#F9F9F9] rounded-2xl border border-neutral-200 space-y-4">
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   {/* QR Code Container */}
                   <div className="w-36 h-36 bg-white p-2 rounded-xl border border-neutral-200 shrink-0 shadow-sm flex items-center justify-center overflow-hidden">
                     <img
-                      src="https://i.ibb.co/5gR2grvR/bank.jpg"
-                      alt="Bank Transfer QR - Sunil Gurung"
+                      src={paymentSettings.bank.qrCodeUrl || "https://i.ibb.co/5gR2grvR/bank.jpg"}
+                      alt="Bank Transfer QR"
                       className="w-full h-full object-contain"
                       referrerPolicy="no-referrer"
                     />
@@ -353,44 +363,50 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         ACCOUNT HOLDER NAME
                       </span>
                       <span className="text-sm font-bold text-black uppercase">
-                        SUNIL GURUNG
+                        {paymentSettings.bank.accountHolder}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-neutral-200">
                       <div>
                         <span className="text-[9px] text-neutral-400 uppercase block">BANK</span>
-                        <span className="font-bold text-neutral-800">NABIL BANK / STAND. CHARTERED</span>
+                        <span className="font-bold text-neutral-800">{paymentSettings.bank.bankName}</span>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between p-2 bg-white rounded-lg border border-neutral-200">
                       <div>
                         <span className="text-[9px] text-neutral-400 uppercase block">ACCOUNT NO.</span>
-                        <span className="font-bold text-neutral-900">0190 2841 9820 11</span>
+                        <span className="font-bold text-neutral-900">{paymentSettings.bank.accountNumber}</span>
                       </div>
                       <button
                         type="button"
-                        onClick={() => handleCopy('01902841982011', 'bank-acc')}
+                        onClick={() => handleCopy(paymentSettings.bank.accountNumber, 'bank-acc')}
                         className="px-2.5 py-1 bg-neutral-100 hover:bg-neutral-200 rounded text-[10px] font-bold flex items-center gap-1 transition-colors"
                       >
                         {copiedField === 'bank-acc' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
                         <span>{copiedField === 'bank-acc' ? 'COPIED' : 'COPY'}</span>
                       </button>
                     </div>
+
+                    {paymentSettings.bank.notes && (
+                      <p className="text-[10px] font-sans text-neutral-600 leading-snug">
+                        {paymentSettings.bank.notes}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
             )}
 
-            {paymentMethod === 'ESEWA' && (
+            {paymentMethod === 'ESEWA' && paymentSettings.esewa.enabled && (
               <div className="p-4 sm:p-5 bg-emerald-50/50 rounded-2xl border border-emerald-200 space-y-4">
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   {/* eSewa QR Code */}
                   <div className="w-36 h-36 bg-white p-2 rounded-xl border border-emerald-200 shrink-0 shadow-sm flex items-center justify-center overflow-hidden">
                     <img
-                      src="https://i.ibb.co/FbDMSvNQ/esewa.jpg"
-                      alt="eSewa QR - Sunil Gurung"
+                      src={paymentSettings.esewa.qrCodeUrl || "https://i.ibb.co/FbDMSvNQ/esewa.jpg"}
+                      alt="eSewa QR"
                       className="w-full h-full object-contain"
                       referrerPolicy="no-referrer"
                     />
@@ -403,7 +419,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         eSEWA ACCOUNT HOLDER
                       </span>
                       <span className="text-sm font-bold text-emerald-950 uppercase">
-                        SUNIL GURUNG
+                        {paymentSettings.esewa.accountHolder}
                       </span>
                     </div>
 
@@ -412,11 +428,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         <span className="text-[9px] text-emerald-800 uppercase block font-semibold">
                           eSEWA ID / MOBILE NUMBER
                         </span>
-                        <span className="font-bold text-emerald-950">9847459808</span>
+                        <span className="font-bold text-emerald-950">{paymentSettings.esewa.accountNumber}</span>
                       </div>
                       <button
                         type="button"
-                        onClick={() => handleCopy('9847459808', 'esewa-id')}
+                        onClick={() => handleCopy(paymentSettings.esewa.accountNumber, 'esewa-id')}
                         className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold flex items-center gap-1 transition-colors"
                       >
                         {copiedField === 'esewa-id' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
@@ -425,20 +441,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     </div>
 
                     <p className="text-[10px] font-sans text-emerald-700 leading-snug">
-                      Please enter your Full Name in the remarks section while transferring.
+                      {paymentSettings.esewa.notes || 'Please enter your Full Name in the remarks section while transferring.'}
                     </p>
                   </div>
                 </div>
               </div>
             )}
 
-            {paymentMethod === 'COD' && (
+            {paymentMethod === 'COD' && paymentSettings.cod.enabled && (
               <div className="p-4 sm:p-5 bg-neutral-50 rounded-2xl border border-neutral-200 space-y-2">
                 <h4 className="font-display font-bold text-sm uppercase text-black">
-                  CASH ON DELIVERY (NEPAL ONLY)
+                  {paymentSettings.cod.name || 'CASH ON DELIVERY (NEPAL ONLY)'}
                 </h4>
                 <p className="font-sans text-xs text-neutral-600 leading-relaxed">
-                  Pay the total amount in cash to our courier partner upon inspecting your parcel at your doorstep.
+                  {paymentSettings.cod.instructions || 'Pay the total amount in cash to our courier partner upon inspecting your parcel at your doorstep.'}
                 </p>
               </div>
             )}

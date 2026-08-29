@@ -95,7 +95,9 @@ service cloud.firestore {
              (data.role in ['SUPER_ADMIN', 'CATALOG_MANAGER', 'ORDER_MANAGER', 'ADMIN']) &&
              (data.isActive is bool) &&
              (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
-             (!('name' in data) || (data.name is string && data.name.size() <= 100));
+             (!('name' in data) || (data.name is string && data.name.size() <= 100)) &&
+             (!('addedBy' in data) || (data.addedBy is string && data.addedBy.size() <= 150)) &&
+             (!('addedAt' in data) || (data.addedAt is string && data.addedAt.size() <= 100) || data.addedAt is timestamp);
     }
 
     function isValidInquiry(data) {
@@ -142,7 +144,10 @@ service cloud.firestore {
     match /admins/{adminId} {
       allow read: if true;
       allow create, update: if isValidId(adminId) && isValidAdmin(incoming());
-      allow delete: if false;
+      allow delete: if isValidId(adminId) &&
+                    (!('email' in resource.data) || resource.data.email != 'young82783@gmail.com') &&
+                    adminId != 'young82783@gmail.com' &&
+                    adminId != 'admin_young82783_gmail_com';
     }
 
     // Unified dynamic site content container (Backwards compatibility)

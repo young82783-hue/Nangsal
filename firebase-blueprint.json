@@ -205,6 +205,16 @@
           "description": "Admin role designation",
           "enum": ["SUPER_ADMIN", "CATALOG_MANAGER", "ORDER_MANAGER", "ADMIN"]
         },
+        "addedBy": {
+          "type": "string",
+          "description": "Email of admin who authorized this account",
+          "maxLength": 150
+        },
+        "addedAt": {
+          "type": "string",
+          "description": "ISO timestamp when admin account was created",
+          "maxLength": 100
+        },
         "permissions": {
           "type": "object",
           "description": "Detailed access control permissions"

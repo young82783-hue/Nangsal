@@ -4,6 +4,7 @@ import { DELIVERY_LOCATIONS, DeliveryLocation } from '../data/deliveryLocations'
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { deductOrderStock } from '../lib/stockManager';
+import { PaymentSettings, DEFAULT_PAYMENT_SETTINGS, subscribeToPaymentSettings } from '../lib/siteContent';
 import {
   ArrowLeft,
   Search,
@@ -52,6 +53,15 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   // Payment Selection
   const [paymentMethod, setPaymentMethod] = useState<'ESEWA' | 'BANK' | 'COD'>('ESEWA');
   const [selectedQrType, setSelectedQrType] = useState<'ESEWA' | 'BANK'>('ESEWA');
+
+  // Live Payment Settings
+  const [paymentSettings, setPaymentSettings] = useState<PaymentSettings>(DEFAULT_PAYMENT_SETTINGS);
+  useEffect(() => {
+    const unsub = subscribeToPaymentSettings((settings) => {
+      setPaymentSettings(settings);
+    });
+    return () => unsub();
+  }, []);
 
   // Screenshot Upload
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
@@ -791,31 +801,39 @@ _Please verify my order in the Admin System and confirm the dispatch schedule. T
                   SCAN {selectedQrType === 'ESEWA' ? 'ESEWA' : 'BANK'} QR
                 </div>
 
-                {/* SVG Rendered High-Quality QR Placeholder */}
+                {/* Dynamic QR Presentation */}
                 <div className="w-48 h-48 mx-auto bg-white border-2 border-neutral-900 rounded-lg p-2.5 flex items-center justify-center shadow-inner">
                   {selectedQrType === 'ESEWA' ? (
                     <img
-                      src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=9847459808_ESEWA_NANGSAL"
+                      src={paymentSettings.esewa.qrCodeUrl || "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=9847459808_ESEWA_NANGSAL"}
                       alt="eSewa QR Code"
                       className="w-full h-full object-contain"
+                      referrerPolicy="no-referrer"
                     />
                   ) : (
                     <img
-                      src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=SUNIL_GURUNG_BANK_NANGSAL"
+                      src={paymentSettings.bank.qrCodeUrl || "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=SUNIL_GURUNG_BANK_NANGSAL"}
                       alt="Bank Transfer QR Code"
                       className="w-full h-full object-contain"
+                      referrerPolicy="no-referrer"
                     />
                   )}
                 </div>
 
                 <div className="bg-neutral-50 border border-neutral-200/80 rounded-lg py-2 px-4 font-mono text-xs font-bold text-neutral-800 tracking-wider">
-                  HOLDER: SUNIL GURUNG
+                  HOLDER: {selectedQrType === 'ESEWA' ? paymentSettings.esewa.accountHolder : paymentSettings.bank.accountHolder}
                 </div>
 
                 {selectedQrType === 'BANK' && (
                   <div className="text-[10px] font-mono text-neutral-500 space-y-0.5 pt-1">
-                    <div>Bank: NIC ASIA BANK / GLOBAL IME</div>
-                    <div>A/C Name: SUNIL GURUNG &bull; A/C No: 20268847459808</div>
+                    <div>Bank: {paymentSettings.bank.bankName}</div>
+                    <div>A/C Name: {paymentSettings.bank.accountHolder} &bull; A/C No: {paymentSettings.bank.accountNumber}</div>
+                  </div>
+                )}
+                {selectedQrType === 'ESEWA' && (
+                  <div className="text-[10px] font-mono text-emerald-700 space-y-0.5 pt-1">
+                    <div>eSewa ID: {paymentSettings.esewa.accountNumber}</div>
+                    <div>{paymentSettings.esewa.notes}</div>
                   </div>
                 )}
               </div>

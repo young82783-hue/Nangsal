@@ -11,11 +11,41 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Product, SiteBannerContent, CustomNavButton } from '../types';
+import { Product, SiteBannerContent, CustomNavButton, PaymentSettings } from '../types';
 import { PRODUCTS as INITIAL_PRODUCTS_SEED } from '../data/products';
 import { purgeStaleCaches } from './cacheManager';
 
-export type { SiteBannerContent, Product, CustomNavButton };
+export type { SiteBannerContent, Product, CustomNavButton, PaymentSettings };
+
+/**
+ * Default Master Payment Settings
+ */
+export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
+  esewa: {
+    enabled: true,
+    name: 'eSewa Direct Online Payment',
+    accountHolder: 'SUNIL GURUNG',
+    accountNumber: '9847459808',
+    qrCodeUrl: 'https://i.ibb.co/FbDMSvNQ/esewa.jpg',
+    notes: 'Please enter your Full Name in the remarks section while transferring.',
+  },
+  bank: {
+    enabled: true,
+    name: 'Direct Bank Transfer',
+    accountHolder: 'SUNIL GURUNG',
+    bankName: 'NABIL BANK / STAND. CHARTERED',
+    accountNumber: '0190 2841 9820 11',
+    branch: 'Kathmandu Branch',
+    qrCodeUrl: 'https://i.ibb.co/5gR2grvR/bank.jpg',
+    notes: 'Please transfer to the above account and upload transaction receipt or ref ID.',
+  },
+  cod: {
+    enabled: true,
+    name: 'Cash on Delivery (COD)',
+    instructions: 'Pay the total amount in cash to our courier partner upon inspecting your parcel at your doorstep.',
+  },
+  version: 1,
+};
 
 /**
  * Extracts a reliable numeric or string version/timestamp from banner data.
@@ -163,6 +193,17 @@ export async function bootstrapFirestoreDataIfNeeded(): Promise<void> {
       }
     }
 
+    // Bootstrap payment settings if not exists
+    const paymentDocRef = doc(db, 'site_content', 'payment_settings');
+    const paymentSnap = await getDoc(paymentDocRef);
+    if (!paymentSnap.exists()) {
+      await setDoc(paymentDocRef, {
+        ...DEFAULT_PAYMENT_SETTINGS,
+        updatedAt: serverTimestamp(),
+      });
+      console.log('[SiteContent] Bootstrapped payment_settings in Firestore.');
+    }
+
     const productsSnap = await getDocs(collection(db, 'products'));
     if (productsSnap.empty) {
       console.log('[SiteContent] Bootstrapping initial products collection in Firestore...');
@@ -200,9 +241,58 @@ export async function bootstrapFirestoreDataIfNeeded(): Promise<void> {
 }
 
 /**
- * Real-time subscription to site banners and dynamic content.
- * Firestore is the ONLY source of truth.
+ * Real-time subscription to payment settings from Firestore.
  */
+export function subscribeToPaymentSettings(
+  onUpdate: (settings: PaymentSettings) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const paymentDocRef = doc(db, 'site_content', 'payment_settings');
+
+  return onSnapshot(
+    paymentDocRef,
+    (snap) => {
+      if (snap.metadata.fromCache) {
+        return;
+      }
+      if (snap.exists()) {
+        const data = snap.data() as PaymentSettings;
+        onUpdate({
+          ...DEFAULT_PAYMENT_SETTINGS,
+          ...data,
+          esewa: { ...DEFAULT_PAYMENT_SETTINGS.esewa, ...(data.esewa || {}) },
+          bank: { ...DEFAULT_PAYMENT_SETTINGS.bank, ...(data.bank || {}) },
+          cod: { ...DEFAULT_PAYMENT_SETTINGS.cod, ...(data.cod || {}) },
+        });
+      } else {
+        onUpdate(DEFAULT_PAYMENT_SETTINGS);
+      }
+    },
+    (err) => {
+      console.warn('[SiteContent] Payment settings subscription warning:', err);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Save / Update Payment Settings directly in Firestore.
+ */
+export async function updatePaymentSettings(settings: Partial<PaymentSettings>): Promise<void> {
+  const paymentDocRef = doc(db, 'site_content', 'payment_settings');
+  const now = Date.now();
+  try {
+    const payload = {
+      ...settings,
+      version: now,
+      updatedAt: serverTimestamp(),
+    };
+    await setDoc(paymentDocRef, payload, { merge: true });
+    purgeStaleCaches();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'site_content/payment_settings');
+  }
+}
 export function subscribeToSiteContent(
   onUpdate: (content: SiteBannerContent) => void,
   onError?: (error: Error) => void

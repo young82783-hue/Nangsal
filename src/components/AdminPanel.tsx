@@ -27,6 +27,20 @@ import {
   Phone,
   MapPin,
   Menu,
+  UserPlus,
+  Users,
+  Lock,
+  Copy,
+  Check,
+  Mail,
+  Shield,
+  UserCheck,
+  UserX,
+  RefreshCw,
+  QrCode,
+  Building2,
+  Wallet,
+  Loader2,
 } from 'lucide-react';
 import {
   signInWithPopup,
@@ -40,6 +54,7 @@ import {
   doc,
   setDoc,
   updateDoc,
+  deleteDoc,
   serverTimestamp,
   getDocs,
 } from 'firebase/firestore';
@@ -52,13 +67,20 @@ import {
   updateSiteContent,
   saveProduct,
   deleteProduct,
+  PaymentSettings,
+  DEFAULT_PAYMENT_SETTINGS,
+  subscribeToPaymentSettings,
+  updatePaymentSettings,
 } from '../lib/siteContent';
-import { Product } from '../types';
+import { Product, Admin, AdminRole } from '../types';
 import { purgeStaleCaches, forceHardReload } from '../lib/cacheManager';
 import { replenishOrderStock } from '../lib/stockManager';
 import { AdminProductModal } from './AdminProductModal';
 
-// Allowed Super Admin Google Emails
+// Primary Store Owner & Super Admin Google Email (Protected Account)
+const PRIMARY_SUPER_ADMIN_EMAIL = 'young82783@gmail.com';
+
+// Allowed Root Admin Google Emails
 const AUTHORIZED_ADMIN_EMAILS = [
   'young82783@gmail.com',
   'admin@nangsalapparel.com',
@@ -79,6 +101,8 @@ type AdminTab =
   | 'PRODUCTS'
   | 'STOCK'
   | 'BANNERS'
+  | 'PAYMENTS'
+  | 'ADMINS'
   | 'SETTINGS';
 
 interface OrderItem {
@@ -143,6 +167,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Live Stocks State
   const [stockRecords, setStockRecords] = useState<any[]>([]);
 
+  // Live Admins State
+  const [adminUsers, setAdminUsers] = useState<Admin[]>([]);
+  const [adminSearchQuery, setAdminSearchQuery] = useState<string>('');
+  const [adminRoleFilter, setAdminRoleFilter] = useState<string>('ALL');
+  const [newAdminEmail, setNewAdminEmail] = useState<string>('');
+  const [newAdminName, setNewAdminName] = useState<string>('');
+  const [newAdminRole, setNewAdminRole] = useState<AdminRole>('ADMIN');
+  const [isAddingAdmin, setIsAddingAdmin] = useState<boolean>(false);
+  const [adminAlert, setAdminAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
+  const [deletingAdminEmail, setDeletingAdminEmail] = useState<string | null>(null);
+  const [isDeletingAdmin, setIsDeletingAdmin] = useState<boolean>(false);
+
   // Product Modal State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
@@ -155,6 +192,68 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [bannerSaveSuccess, setBannerSaveSuccess] = useState(false);
   const [uploadingBannerField, setUploadingBannerField] = useState<string | null>(null);
 
+  // Payment Settings Management State
+  const [paymentSettingsForm, setPaymentSettingsForm] = useState<PaymentSettings>(DEFAULT_PAYMENT_SETTINGS);
+  const [isSavingPayments, setIsSavingPayments] = useState(false);
+  const [paymentSaveSuccess, setPaymentSaveSuccess] = useState(false);
+  const [uploadingQrType, setUploadingQrType] = useState<'esewa' | 'bank' | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToPaymentSettings((settings) => {
+      setPaymentSettingsForm(settings);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleSavePaymentSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingPayments(true);
+    setPaymentSaveSuccess(false);
+    try {
+      await updatePaymentSettings(paymentSettingsForm);
+      setIsSavingPayments(false);
+      setPaymentSaveSuccess(true);
+      setTimeout(() => setPaymentSaveSuccess(false), 4000);
+    } catch (err) {
+      console.error('Failed to save payment settings:', err);
+      setIsSavingPayments(false);
+      alert('Failed to save payment settings.');
+    }
+  };
+
+  const handleUploadPaymentQr = async (e: React.ChangeEvent<HTMLInputElement>, type: 'esewa' | 'bank') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingQrType(type);
+    try {
+      const downloadUrl = await uploadImageToStorage(file, 'banners');
+      setPaymentSettingsForm((prev) => ({
+        ...prev,
+        [type]: {
+          ...prev[type],
+          qrCodeUrl: downloadUrl,
+        },
+      }));
+      setUploadingQrType(null);
+    } catch (err) {
+      console.error('Error uploading payment QR:', err);
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setPaymentSettingsForm((prev) => ({
+            ...prev,
+            [type]: {
+              ...prev[type],
+              qrCodeUrl: reader.result as string,
+            },
+          }));
+        }
+        setUploadingQrType(null);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // 1. Firebase Auth Listener & Admin Authorization Guard
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -163,7 +262,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setCurrentUser(user);
         const email = user.email?.toLowerCase().trim() || '';
         
-        // Check if user is in authorized superadmin list
+        // Check if user is the primary store owner or in root admin list
         const isSuperAdminEmail = AUTHORIZED_ADMIN_EMAILS.some(
           (adminEmail) => adminEmail.toLowerCase() === email
         );
@@ -171,17 +270,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         if (isSuperAdminEmail) {
           setIsAdminAuthorized(true);
           setAuthError('');
-          // Upsert admin record in Firestore
+          // Upsert admin record in Firestore with user UID & email
           try {
+            const adminDocId = email === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()
+              ? 'admin_young82783_gmail_com'
+              : `admin_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
             await setDoc(
-              doc(db, 'admins', user.uid),
+              doc(db, 'admins', adminDocId),
               {
-                id: user.uid,
+                id: adminDocId,
+                uid: user.uid,
                 email: user.email,
-                name: user.displayName || 'Admin',
+                name: user.displayName || (email === PRIMARY_SUPER_ADMIN_EMAIL ? 'Primary Store Owner' : 'Super Admin'),
                 role: 'SUPER_ADMIN',
                 isActive: true,
+                addedBy: 'System Root',
                 lastLogin: serverTimestamp(),
+                updatedAt: serverTimestamp(),
               },
               { merge: true }
             );
@@ -191,37 +297,52 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         } else {
           // Check if admin doc exists in Firestore /admins collection
           try {
-            const adminDoc = await getDocs(collection(db, 'admins'));
-            let found = false;
-            adminDoc.forEach((d) => {
+            const adminDocsSnapshot = await getDocs(collection(db, 'admins'));
+            let foundAdminDoc: any = null;
+
+            adminDocsSnapshot.forEach((d) => {
               const data = d.data();
+              const docEmail = (data.email || '').toLowerCase().trim();
               if (
-                data.email?.toLowerCase() === email ||
-                d.id === user.uid
+                docEmail === email ||
+                d.id === user.uid ||
+                data.uid === user.uid
               ) {
                 if (data.isActive !== false) {
-                  found = true;
+                  foundAdminDoc = { id: d.id, ...data };
                 }
               }
             });
 
-            if (found) {
+            if (foundAdminDoc) {
               setIsAdminAuthorized(true);
               setAuthError('');
+              // Update last login timestamp & auth UID
+              try {
+                await updateDoc(doc(db, 'admins', foundAdminDoc.id), {
+                  uid: user.uid,
+                  name: user.displayName || foundAdminDoc.name || email.split('@')[0],
+                  lastLogin: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                });
+              } catch (updateErr) {
+                console.warn('Last login timestamp update notice:', updateErr);
+              }
             } else {
               // Unauthorized user: revoke session & sign out
               await signOut(auth);
               setCurrentUser(null);
               setIsAdminAuthorized(false);
               setAuthError(
-                `Access Denied: ${user.email} is not registered as an authorized administrator for NANGSAL APPAREL.`
+                `Access Denied: "${user.email}" is not registered as an authorized administrator for NANGSAL APPAREL. Please ask the store owner (${PRIMARY_SUPER_ADMIN_EMAIL}) to add your Gmail in the Admin Panel.`
               );
             }
           } catch (err) {
+            console.error('Admin verification error:', err);
             await signOut(auth);
             setCurrentUser(null);
             setIsAdminAuthorized(false);
-            setAuthError('Authentication error. Please contact the store owner.');
+            setAuthError('Authentication verification error. Please try again or contact the store owner.');
           }
         }
       } else {
@@ -270,6 +391,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return () => unsub();
     } catch (e) {
       console.warn('Stocks subscription error:', e);
+    }
+  }, [isAdminAuthorized]);
+
+  // 4. Real-time Admins Subscription from Firestore
+  useEffect(() => {
+    if (!isAdminAuthorized) return;
+    try {
+      const unsub = onSnapshot(collection(db, 'admins'), (snapshot) => {
+        const list: Admin[] = [];
+        let hasPrimary = false;
+        snapshot.forEach((d) => {
+          const data = d.data() as any;
+          const email = (data.email || '').toLowerCase().trim();
+          if (email === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()) {
+            hasPrimary = true;
+          }
+          list.push({
+            id: d.id,
+            email: data.email || '',
+            name: data.name || data.email?.split('@')[0] || 'Admin',
+            role: data.role || 'ADMIN',
+            isActive: data.isActive !== false,
+            addedBy: data.addedBy || 'System Root',
+            addedAt: data.addedAt || data.createdAt || null,
+            lastLogin: data.lastLogin || null,
+            permissions: data.permissions || undefined,
+          });
+        });
+
+        // Ensure the Primary Super Admin is always present in list
+        if (!hasPrimary) {
+          list.unshift({
+            id: 'admin_young82783_gmail_com',
+            email: PRIMARY_SUPER_ADMIN_EMAIL,
+            name: 'Primary Store Owner',
+            role: 'SUPER_ADMIN',
+            isActive: true,
+            addedBy: 'System Root',
+            addedAt: 'Store Initialization',
+          });
+        }
+
+        // Sort: Primary Super Admin first, then alphabetical/role
+        list.sort((a, b) => {
+          if (a.email.toLowerCase() === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()) return -1;
+          if (b.email.toLowerCase() === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()) return 1;
+          return (a.name || a.email).localeCompare(b.name || b.email);
+        });
+
+        setAdminUsers(list);
+      });
+      return () => unsub();
+    } catch (e) {
+      console.warn('Admins subscription notice:', e);
     }
   }, [isAdminAuthorized]);
 
@@ -562,6 +737,180 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  // =========================================================================
+  // ADMIN MANAGEMENT HANDLERS
+  // =========================================================================
+
+  // Handler to Add a New Admin
+  const handleAddAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminAlert(null);
+
+    const email = newAdminEmail.trim().toLowerCase();
+    if (!email) {
+      setAdminAlert({ type: 'error', message: 'Please enter a valid Gmail address.' });
+      return;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setAdminAlert({ type: 'error', message: 'Please enter a valid email format (e.g. coworker@gmail.com).' });
+      return;
+    }
+
+    // Check if already in admins list
+    const existing = adminUsers.find((a) => a.email.toLowerCase() === email);
+    if (existing) {
+      if (existing.isActive) {
+        setAdminAlert({
+          type: 'error',
+          message: `"${email}" is already registered as an active admin (${existing.role}).`,
+        });
+        return;
+      } else {
+        // Reactivate existing admin
+        try {
+          setIsAddingAdmin(true);
+          await updateDoc(doc(db, 'admins', existing.id), {
+            isActive: true,
+            role: newAdminRole,
+            updatedAt: serverTimestamp(),
+          });
+          setAdminAlert({
+            type: 'success',
+            message: `Admin permissions reactivated for "${email}". They can now access /admin.`,
+          });
+          setNewAdminEmail('');
+          setNewAdminName('');
+          setIsAddingAdmin(false);
+          return;
+        } catch (err: any) {
+          setIsAddingAdmin(false);
+          setAdminAlert({ type: 'error', message: `Failed to reactivate: ${err?.message || err}` });
+          return;
+        }
+      }
+    }
+
+    setIsAddingAdmin(true);
+    try {
+      const docId = `admin_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      const newAdminRecord: any = {
+        id: docId,
+        email: email,
+        name: newAdminName.trim() || email.split('@')[0],
+        role: newAdminRole,
+        isActive: true,
+        addedBy: currentUser?.email || PRIMARY_SUPER_ADMIN_EMAIL,
+        addedAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      await setDoc(doc(db, 'admins', docId), newAdminRecord, { merge: true });
+
+      setAdminAlert({
+        type: 'success',
+        message: `Admin "${email}" authorized successfully! They can now log in at /admin using "Continue with Google".`,
+      });
+      setNewAdminEmail('');
+      setNewAdminName('');
+      setNewAdminRole('ADMIN');
+    } catch (err: any) {
+      console.error('Error adding admin:', err);
+      setAdminAlert({
+        type: 'error',
+        message: `Failed to save admin to Firebase: ${err?.message || err}`,
+      });
+    } finally {
+      setIsAddingAdmin(false);
+    }
+  };
+
+  // Handler to Remove an Admin
+  const handleRemoveAdmin = async (admin: Admin) => {
+    const email = admin.email.toLowerCase().trim();
+    if (email === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()) {
+      alert('Security Protection: The primary store owner account (young82783@gmail.com) is permanently protected and cannot be removed.');
+      return;
+    }
+
+    if (
+      !confirm(
+        `Are you sure you want to permanently revoke admin access for "${admin.email}"?\n\nThey will immediately lose access to the NANGSAL APPAREL admin control panel.`
+      )
+    ) {
+      return;
+    }
+
+    setIsDeletingAdmin(true);
+    setDeletingAdminEmail(admin.email);
+    setAdminAlert(null);
+    try {
+      // Delete document from Firestore /admins collection
+      await deleteDoc(doc(db, 'admins', admin.id));
+      
+      // Cleanup UID document if distinct
+      if (admin.uid && admin.uid !== admin.id) {
+        try {
+          await deleteDoc(doc(db, 'admins', admin.uid));
+        } catch (_) {}
+      }
+
+      setAdminAlert({
+        type: 'success',
+        message: `Admin access for "${admin.email}" has been successfully revoked.`,
+      });
+    } catch (err: any) {
+      console.error('Failed to remove admin:', err);
+      setAdminAlert({
+        type: 'error',
+        message: `Failed to remove admin: ${err?.message || err}`,
+      });
+    } finally {
+      setIsDeletingAdmin(false);
+      setDeletingAdminEmail(null);
+    }
+  };
+
+  // Handler to Toggle Active / Suspended Status
+  const handleToggleAdminStatus = async (admin: Admin) => {
+    if (admin.email.toLowerCase() === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()) {
+      alert('The primary store owner account is permanent and cannot be suspended.');
+      return;
+    }
+
+    const newStatus = !admin.isActive;
+    try {
+      await updateDoc(doc(db, 'admins', admin.id), {
+        isActive: newStatus,
+        updatedAt: serverTimestamp(),
+      });
+      setAdminAlert({
+        type: 'success',
+        message: `Admin "${admin.email}" status updated to ${newStatus ? 'ACTIVE' : 'SUSPENDED'}.`,
+      });
+    } catch (err: any) {
+      console.error('Failed to toggle admin status:', err);
+      setAdminAlert({
+        type: 'error',
+        message: `Failed to update status: ${err?.message || err}`,
+      });
+    }
+  };
+
+  // Handler to Copy Email
+  const handleCopyEmail = (email: string) => {
+    try {
+      navigator.clipboard.writeText(email);
+      setCopiedEmail(email);
+      setTimeout(() => setCopiedEmail(null), 2500);
+    } catch (err) {
+      console.warn('Clipboard error:', err);
+    }
+  };
+
   // Filtered Orders
   const filteredOrders = useMemo(() => {
     return liveOrders.filter((order) => {
@@ -590,6 +939,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         p.id?.toLowerCase().includes(q)
     );
   }, [products, searchQuery]);
+
+  // Filtered Admins
+  const filteredAdmins = useMemo(() => {
+    return adminUsers.filter((admin) => {
+      const matchesRole =
+        adminRoleFilter === 'ALL' ||
+        (adminRoleFilter === 'ACTIVE' && admin.isActive) ||
+        (adminRoleFilter === 'SUSPENDED' && !admin.isActive) ||
+        admin.role === adminRoleFilter;
+      const q = adminSearchQuery.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        admin.email?.toLowerCase().includes(q) ||
+        admin.name?.toLowerCase().includes(q) ||
+        admin.role?.toLowerCase().includes(q) ||
+        admin.addedBy?.toLowerCase().includes(q);
+      return matchesRole && matchesSearch;
+    });
+  }, [adminUsers, adminRoleFilter, adminSearchQuery]);
 
   // Dashboard Stats Calculations
   const stats = useMemo(() => {
@@ -700,6 +1068,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // VIEW 2: AUTHENTICATED ADMIN DASHBOARD (Mobile & Desktop Responsive)
   // =========================================================================
   const pendingOrdersCount = liveOrders.filter((o) => o.status === 'PENDING_VERIFICATION').length;
+  const activeAdminsCount = adminUsers.filter((a) => a.isActive).length;
 
   const NAV_ITEMS = [
     { id: 'DASHBOARD' as AdminTab, label: 'Dashboard', icon: TrendingUp },
@@ -717,6 +1086,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     },
     { id: 'STOCK' as AdminTab, label: 'Stock', icon: Boxes },
     { id: 'BANNERS' as AdminTab, label: 'Banners', icon: Sparkles },
+    { id: 'PAYMENTS' as AdminTab, label: 'Payments', icon: QrCode },
+    {
+      id: 'ADMINS' as AdminTab,
+      label: 'Admins',
+      icon: Users,
+      badge: activeAdminsCount > 0 ? activeAdminsCount : null,
+    },
     { id: 'SETTINGS' as AdminTab, label: 'Settings', icon: Settings },
   ];
 
@@ -1617,7 +1993,948 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             )}
 
             {/* ============================================================= */}
-            {/* TAB 6: SETTINGS */}
+            {/* TAB 6: ADMINS (Add Admin, List Admins, Role Management) */}
+            {/* ============================================================= */}
+            {activeTab === 'ADMINS' && (
+              <div className="space-y-6 max-w-5xl">
+                {/* Header & Stats */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-neutral-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">
+                        Authorized Admin Accounts
+                      </h1>
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#FFF0EE] text-[#E0533C] text-xs font-mono font-bold">
+                        {adminUsers.length} total
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-500 mt-0.5">
+                      Authorize Google accounts with instant access to the NANGSAL APPAREL admin portal.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 text-[11px] font-mono font-medium border border-emerald-200/60">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Firestore Rules Enforced</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Primary Admin Protected Banner */}
+                <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-200/80 p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold font-mono text-emerald-950">
+                          {PRIMARY_SUPER_ADMIN_EMAIL}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-mono font-bold tracking-wide">
+                          PRIMARY STORE OWNER
+                        </span>
+                      </div>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        Permanent root administrator. Safeguarded from deletion in both frontend and Firestore security rules.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyEmail(PRIMARY_SUPER_ADMIN_EMAIL)}
+                      className="px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-mono font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                    >
+                      {copiedEmail === PRIMARY_SUPER_ADMIN_EMAIL ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Copy Gmail</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Alert Notification */}
+                {adminAlert && (
+                  <div
+                    className={`p-4 rounded-2xl text-xs flex items-start justify-between gap-3 border ${
+                      adminAlert.type === 'success'
+                        ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                        : 'bg-red-50 text-red-900 border-red-200'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      {adminAlert.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                      )}
+                      <p className="font-medium leading-relaxed">{adminAlert.message}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAdminAlert(null)}
+                      className="p-1 hover:bg-black/5 rounded-lg text-neutral-500 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Section 1: Add New Admin Form */}
+                <div className="bg-white p-5 sm:p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2.5 pb-3 border-b border-neutral-100">
+                    <div className="w-8 h-8 rounded-xl bg-[#FFF0EE] text-[#E0533C] flex items-center justify-center">
+                      <UserPlus className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-neutral-900">
+                        Add New Authorized Administrator
+                      </h3>
+                      <p className="text-xs text-neutral-500">
+                        Enter their Gmail address. They will be able to log in at <span className="font-mono text-neutral-700">/admin</span> using "Continue with Google".
+                      </p>
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleAddAdmin} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                      {/* Field 1: Gmail Address */}
+                      <div className="sm:col-span-1">
+                        <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1.5">
+                          Admin Gmail <span className="text-red-500">*</span>
+                        </label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="email"
+                            required
+                            value={newAdminEmail}
+                            onChange={(e) => setNewAdminEmail(e.target.value)}
+                            placeholder="coworker@gmail.com"
+                            className="w-full pl-10 pr-3 py-2.5 bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#E0533C] focus:ring-2 focus:ring-[#E0533C]/10 rounded-xl text-xs font-mono font-medium outline-none transition-all"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Field 2: Full Name / Note */}
+                      <div className="sm:col-span-1">
+                        <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1.5">
+                          Display Name / Role Note
+                        </label>
+                        <input
+                          type="text"
+                          value={newAdminName}
+                          onChange={(e) => setNewAdminName(e.target.value)}
+                          placeholder="e.g. Sunil (Stock Manager)"
+                          className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#E0533C] focus:ring-2 focus:ring-[#E0533C]/10 rounded-xl text-xs font-medium outline-none transition-all"
+                        />
+                      </div>
+
+                      {/* Field 3: Admin Role */}
+                      <div className="sm:col-span-1">
+                        <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1.5">
+                          Administrative Role
+                        </label>
+                        <select
+                          value={newAdminRole}
+                          onChange={(e) => setNewAdminRole(e.target.value as AdminRole)}
+                          className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#E0533C] focus:ring-2 focus:ring-[#E0533C]/10 rounded-xl text-xs font-medium outline-none transition-all cursor-pointer"
+                        >
+                          <option value="ADMIN">ADMIN (Products, Orders, Stock)</option>
+                          <option value="SUPER_ADMIN">SUPER ADMIN (Full Store Access)</option>
+                          <option value="ORDER_MANAGER">ORDER MANAGER (Orders &amp; Shipping)</option>
+                          <option value="CATALOG_MANAGER">CATALOG MANAGER (Products &amp; Media)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                      <p className="text-[11px] text-neutral-400 font-mono">
+                        &bull; Admins do not require a separate password; they authenticate securely via Google OAuth.
+                      </p>
+                      <button
+                        type="submit"
+                        disabled={isAddingAdmin || !newAdminEmail.trim()}
+                        className="w-full sm:w-auto px-6 py-2.5 bg-[#E0533C] hover:bg-[#c94530] disabled:bg-neutral-300 text-white rounded-xl text-xs font-bold tracking-wide transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>{isAddingAdmin ? 'Saving to Firebase...' : 'Add Admin Account'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Section 2: Authorized Admins List */}
+                <div className="space-y-4">
+                  {/* Search and Role Filter Toolbar */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                    <div className="relative flex-1 max-w-md">
+                      <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={adminSearchQuery}
+                        onChange={(e) => setAdminSearchQuery(e.target.value)}
+                        placeholder="Search admins by name, email, or role..."
+                        className="w-full pl-10 pr-4 py-2 bg-white border border-neutral-200 rounded-xl text-xs font-medium outline-none focus:border-[#E0533C] transition-colors"
+                      />
+                    </div>
+
+                    {/* Filter Pills */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+                      {['ALL', 'SUPER_ADMIN', 'ADMIN', 'ORDER_MANAGER', 'CATALOG_MANAGER', 'SUSPENDED'].map(
+                        (roleKey) => (
+                          <button
+                            key={roleKey}
+                            type="button"
+                            onClick={() => setAdminRoleFilter(roleKey)}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-mono whitespace-nowrap transition-all cursor-pointer ${
+                              adminRoleFilter === roleKey
+                                ? 'bg-neutral-900 text-white font-bold shadow-2xs'
+                                : 'bg-white text-neutral-600 hover:bg-neutral-100 border border-neutral-200'
+                            }`}
+                          >
+                            {roleKey.replace('_', ' ')}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Admins Grid / Cards */}
+                  {filteredAdmins.length === 0 ? (
+                    <div className="bg-white p-10 rounded-2xl border border-neutral-100 text-center space-y-2">
+                      <Users className="w-8 h-8 text-neutral-300 mx-auto" />
+                      <p className="text-sm font-semibold text-neutral-700">No admin accounts found</p>
+                      <p className="text-xs text-neutral-400">
+                        Try modifying your search or filter keywords.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {filteredAdmins.map((admin) => {
+                        const isPrimary =
+                          admin.email.toLowerCase() === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase();
+                        const isCurrentUser =
+                          currentUser?.email?.toLowerCase() === admin.email.toLowerCase();
+
+                        return (
+                          <div
+                            key={admin.id || admin.email}
+                            className={`bg-white rounded-2xl border p-4 sm:p-5 transition-all shadow-2xs flex flex-col justify-between space-y-4 ${
+                              isPrimary
+                                ? 'border-emerald-300 ring-1 ring-emerald-500/20'
+                                : admin.isActive
+                                ? 'border-neutral-200/80 hover:border-neutral-300'
+                                : 'border-amber-200/80 bg-amber-50/20 opacity-80'
+                            }`}
+                          >
+                            {/* Card Header: Avatar, Name, Badges */}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3 min-w-0">
+                                <div
+                                  className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs uppercase flex-shrink-0 shadow-2xs ${
+                                    isPrimary
+                                      ? 'bg-emerald-600 text-white'
+                                      : admin.role === 'SUPER_ADMIN'
+                                      ? 'bg-purple-600 text-white'
+                                      : admin.role === 'ORDER_MANAGER'
+                                      ? 'bg-teal-600 text-white'
+                                      : admin.role === 'CATALOG_MANAGER'
+                                      ? 'bg-amber-600 text-white'
+                                      : 'bg-neutral-800 text-white'
+                                  }`}
+                                >
+                                  {admin.name
+                                    ? admin.name.substring(0, 2)
+                                    : admin.email.substring(0, 2)}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <h4 className="font-bold text-sm text-neutral-900 truncate">
+                                      {admin.name || admin.email.split('@')[0]}
+                                    </h4>
+                                    {isCurrentUser && (
+                                      <span className="px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-mono text-[9px] font-bold">
+                                        YOU
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <p className="text-xs font-mono text-neutral-600 truncate">
+                                      {admin.email}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyEmail(admin.email)}
+                                      className="p-1 hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700 rounded transition-colors cursor-pointer"
+                                      title="Copy Email"
+                                    >
+                                      {copiedEmail === admin.email ? (
+                                        <Check className="w-3 h-3 text-emerald-600" />
+                                      ) : (
+                                        <Copy className="w-3 h-3" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Status Badge */}
+                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                                    isPrimary
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : admin.role === 'SUPER_ADMIN'
+                                      ? 'bg-purple-100 text-purple-800'
+                                      : admin.role === 'ORDER_MANAGER'
+                                      ? 'bg-teal-100 text-teal-800'
+                                      : admin.role === 'CATALOG_MANAGER'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-blue-100 text-blue-800'
+                                  }`}
+                                >
+                                  {admin.role.replace('_', ' ')}
+                                </span>
+                                <span
+                                  className={`flex items-center gap-1 text-[10px] font-mono ${
+                                    admin.isActive ? 'text-emerald-600 font-semibold' : 'text-amber-600 font-semibold'
+                                  }`}
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      admin.isActive ? 'bg-emerald-500' : 'bg-amber-500'
+                                    }`}
+                                  />
+                                  {admin.isActive ? 'Active' : 'Suspended'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Card Details: Added By, Last Login */}
+                            <div className="bg-neutral-50 p-3 rounded-xl space-y-1.5 text-[11px] font-mono text-neutral-600">
+                              <div className="flex items-center justify-between">
+                                <span className="text-neutral-400">Added by:</span>
+                                <span className="text-neutral-700 font-medium truncate max-w-[180px]">
+                                  {admin.addedBy || 'System Root'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-neutral-400">Authorized:</span>
+                                <span className="text-neutral-700">
+                                  {admin.addedAt
+                                    ? typeof admin.addedAt === 'string'
+                                      ? admin.addedAt.substring(0, 10)
+                                      : 'Registered'
+                                    : 'Registered'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-neutral-400">Last Login:</span>
+                                <span className="text-neutral-700 font-medium">
+                                  {admin.lastLogin
+                                    ? 'Active User'
+                                    : 'Pending Google Login'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Card Actions Footer */}
+                            <div className="pt-2 border-t border-neutral-100 flex items-center justify-between gap-2">
+                              {isPrimary ? (
+                                <div className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl bg-emerald-50 text-emerald-800 text-[11px] font-mono font-bold">
+                                  <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>Protected Primary Account</span>
+                                </div>
+                              ) : (
+                                <>
+                                  {/* Toggle Active / Suspend */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleAdminStatus(admin)}
+                                    className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border ${
+                                      admin.isActive
+                                        ? 'bg-white hover:bg-amber-50 text-amber-700 border-amber-200'
+                                        : 'bg-emerald-600 hover:bg-emerald-700 text-white border-transparent'
+                                    }`}
+                                  >
+                                    {admin.isActive ? (
+                                      <>
+                                        <UserX className="w-3.5 h-3.5" />
+                                        <span>Suspend</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <UserCheck className="w-3.5 h-3.5" />
+                                        <span>Activate</span>
+                                      </>
+                                    )}
+                                  </button>
+
+                                  {/* Remove Admin Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveAdmin(admin)}
+                                    disabled={isDeletingAdmin && deletingAdminEmail === admin.email}
+                                    className="py-1.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>
+                                      {isDeletingAdmin && deletingAdminEmail === admin.email
+                                        ? 'Revoking...'
+                                        : 'Remove'}
+                                    </span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 3: Security & Workflow Guide */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-2">
+                  <div className="p-4 bg-white rounded-2xl border border-neutral-100 space-y-1.5">
+                    <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-xs">
+                      1
+                    </div>
+                    <h4 className="text-xs font-bold text-neutral-900">Google OAuth Sign-In</h4>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">
+                      Admins simply click "Continue with Google" at <span className="font-mono text-neutral-700">/admin</span> using their authorized Gmail.
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-white rounded-2xl border border-neutral-100 space-y-1.5">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs">
+                      2
+                    </div>
+                    <h4 className="text-xs font-bold text-neutral-900">Real-Time Sync</h4>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">
+                      Adding or removing an admin immediately syncs with Firestore in real-time.
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-white rounded-2xl border border-neutral-100 space-y-1.5">
+                    <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-xs">
+                      3
+                    </div>
+                    <h4 className="text-xs font-bold text-neutral-900">Firestore Rules Guard</h4>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed">
+                      Backend security rules strictly prevent deletion or tampering of the primary owner account.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ============================================================= */}
+            {/* TAB: PAYMENTS QR & DETAILS MANAGEMENT */}
+            {/* ============================================================= */}
+            {activeTab === 'PAYMENTS' && (
+              <div className="space-y-6 max-w-5xl mx-auto pb-12">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">
+                      Payment QR &amp; Details Management
+                    </h1>
+                    <p className="text-xs text-neutral-500 mt-1">
+                      Configure live payment methods, account holders, mobile wallets, bank numbers, and QR codes updated instantly across the website.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSavePaymentSettings}
+                    disabled={isSavingPayments}
+                    className="bg-black hover:bg-neutral-800 text-white font-mono text-xs uppercase tracking-widest font-bold px-6 py-3 rounded-full flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                  >
+                    {isSavingPayments ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>SAVING...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>SAVE ALL CHANGES</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {paymentSaveSuccess && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-4 rounded-2xl flex items-center gap-3 font-mono text-xs">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                    <span>Payment settings saved successfully! Changes are now live across all customer checkouts.</span>
+                  </div>
+                )}
+
+                <div className="space-y-6">
+                  {/* ESEWA PAYMENT CONFIG CARD */}
+                  <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-sm space-y-6">
+                    <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                          <Wallet className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-base text-neutral-900">eSewa Mobile Wallet Payment</h3>
+                          <p className="text-xs text-neutral-500 font-mono">Manage eSewa display name, wallet owner, ID number &amp; QR</p>
+                        </div>
+                      </div>
+
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={paymentSettingsForm.esewa.enabled}
+                          onChange={(e) =>
+                            setPaymentSettingsForm((prev) => ({
+                              ...prev,
+                              esewa: { ...prev.esewa, enabled: e.target.checked },
+                            }))
+                          }
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        <span className="ml-2 font-mono text-xs font-bold text-neutral-700">
+                          {paymentSettingsForm.esewa.enabled ? 'ACTIVE' : 'DISABLED'}
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                      {/* Left: Inputs */}
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Payment Method Title
+                          </label>
+                          <input
+                            type="text"
+                            value={paymentSettingsForm.esewa.name}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                esewa: { ...prev.esewa, name: e.target.value },
+                              }))
+                            }
+                            placeholder="e.g. eSewa Direct Online Payment"
+                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:outline-none focus:border-black"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Account Holder Name
+                          </label>
+                          <input
+                            type="text"
+                            value={paymentSettingsForm.esewa.accountHolder}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                esewa: { ...prev.esewa, accountHolder: e.target.value },
+                              }))
+                            }
+                            placeholder="e.g. SUNIL GURUNG"
+                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono uppercase focus:outline-none focus:border-black"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            eSewa ID / Mobile Number
+                          </label>
+                          <input
+                            type="text"
+                            value={paymentSettingsForm.esewa.accountNumber}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                esewa: { ...prev.esewa, accountNumber: e.target.value },
+                              }))
+                            }
+                            placeholder="e.g. 9847459808"
+                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:outline-none focus:border-black"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Customer Instructions / Notes
+                          </label>
+                          <textarea
+                            value={paymentSettingsForm.esewa.notes || ''}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                esewa: { ...prev.esewa, notes: e.target.value },
+                              }))
+                            }
+                            rows={2}
+                            placeholder="Please enter your Full Name in remarks..."
+                            className="w-full px-3.5 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-sans focus:outline-none focus:border-black"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Right: QR Upload & Preview */}
+                      <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5 flex flex-col items-center text-center space-y-4">
+                        <div className="font-mono text-xs font-bold uppercase text-neutral-700">
+                          eSewa QR Code Preview
+                        </div>
+
+                        <div className="w-44 h-44 bg-white p-2 rounded-2xl border-2 border-dashed border-neutral-300 shadow-sm flex items-center justify-center overflow-hidden relative group">
+                          {paymentSettingsForm.esewa.qrCodeUrl ? (
+                            <img
+                              src={paymentSettingsForm.esewa.qrCodeUrl}
+                              alt="eSewa QR"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="text-neutral-400 font-mono text-[11px] p-4">
+                              No QR uploaded yet
+                            </div>
+                          )}
+
+                          {uploadingQrType === 'esewa' && (
+                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white font-mono text-xs gap-2">
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                              <span>Uploading...</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 justify-center w-full">
+                          <label className="flex-1 bg-black hover:bg-neutral-800 text-white font-mono text-xs uppercase font-bold py-2.5 px-4 rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all">
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>{paymentSettingsForm.esewa.qrCodeUrl ? 'Replace QR' : 'Upload QR'}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleUploadPaymentQr(e, 'esewa')}
+                              className="hidden"
+                            />
+                          </label>
+
+                          {paymentSettingsForm.esewa.qrCodeUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPaymentSettingsForm((prev) => ({
+                                  ...prev,
+                                  esewa: { ...prev.esewa, qrCodeUrl: '' },
+                                }))
+                              }
+                              className="px-3 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-mono text-xs font-bold rounded-xl transition-colors"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-neutral-500 font-sans">
+                          Upload clear PNG/JPG QR screenshot directly from your phone gallery or camera.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* DIRECT BANK TRANSFER CONFIG CARD */}
+                  <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-sm space-y-6">
+                    <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                          <Building2 className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-base text-neutral-900">Direct Bank Transfer</h3>
+                          <p className="text-xs text-neutral-500 font-mono">Manage bank name, account number, branch &amp; QR</p>
+                        </div>
+                      </div>
+
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={paymentSettingsForm.bank.enabled}
+                          onChange={(e) =>
+                            setPaymentSettingsForm((prev) => ({
+                              ...prev,
+                              bank: { ...prev.bank, enabled: e.target.checked },
+                            }))
+                          }
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        <span className="ml-2 font-mono text-xs font-bold text-neutral-700">
+                          {paymentSettingsForm.bank.enabled ? 'ACTIVE' : 'DISABLED'}
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                      {/* Left: Inputs */}
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Payment Method Title
+                          </label>
+                          <input
+                            type="text"
+                            value={paymentSettingsForm.bank.name}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                bank: { ...prev.bank, name: e.target.value },
+                              }))
+                            }
+                            placeholder="e.g. Direct Bank Transfer"
+                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:outline-none focus:border-black"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Account Holder Name
+                          </label>
+                          <input
+                            type="text"
+                            value={paymentSettingsForm.bank.accountHolder}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                bank: { ...prev.bank, accountHolder: e.target.value },
+                              }))
+                            }
+                            placeholder="e.g. SUNIL GURUNG"
+                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono uppercase focus:outline-none focus:border-black"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Bank Name &amp; Institution
+                          </label>
+                          <input
+                            type="text"
+                            value={paymentSettingsForm.bank.bankName}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                bank: { ...prev.bank, bankName: e.target.value },
+                              }))
+                            }
+                            placeholder="e.g. NABIL BANK / NIC ASIA"
+                            className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono uppercase focus:outline-none focus:border-black"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                              Account Number
+                            </label>
+                            <input
+                              type="text"
+                              value={paymentSettingsForm.bank.accountNumber}
+                              onChange={(e) =>
+                                setPaymentSettingsForm((prev) => ({
+                                  ...prev,
+                                  bank: { ...prev.bank, accountNumber: e.target.value },
+                                }))
+                              }
+                              placeholder="e.g. 0190 2841 9820 11"
+                              className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:outline-none focus:border-black"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                              Branch / Location
+                            </label>
+                            <input
+                              type="text"
+                              value={paymentSettingsForm.bank.branch || ''}
+                              onChange={(e) =>
+                                setPaymentSettingsForm((prev) => ({
+                                  ...prev,
+                                  bank: { ...prev.bank, branch: e.target.value },
+                                }))
+                              }
+                              placeholder="e.g. Kathmandu Branch"
+                              className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:outline-none focus:border-black"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                            Customer Instructions / Notes
+                          </label>
+                          <textarea
+                            value={paymentSettingsForm.bank.notes || ''}
+                            onChange={(e) =>
+                              setPaymentSettingsForm((prev) => ({
+                                ...prev,
+                                bank: { ...prev.bank, notes: e.target.value },
+                              }))
+                            }
+                            rows={2}
+                            placeholder="Please transfer and upload transaction receipt..."
+                            className="w-full px-3.5 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-sans focus:outline-none focus:border-black"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Right: QR Upload & Preview */}
+                      <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5 flex flex-col items-center text-center space-y-4">
+                        <div className="font-mono text-xs font-bold uppercase text-neutral-700">
+                          Bank QR Code Preview
+                        </div>
+
+                        <div className="w-44 h-44 bg-white p-2 rounded-2xl border-2 border-dashed border-neutral-300 shadow-sm flex items-center justify-center overflow-hidden relative group">
+                          {paymentSettingsForm.bank.qrCodeUrl ? (
+                            <img
+                              src={paymentSettingsForm.bank.qrCodeUrl}
+                              alt="Bank QR"
+                              className="w-full h-full object-contain"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="text-neutral-400 font-mono text-[11px] p-4">
+                              No QR uploaded yet
+                            </div>
+                          )}
+
+                          {uploadingQrType === 'bank' && (
+                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white font-mono text-xs gap-2">
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                              <span>Uploading...</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 justify-center w-full">
+                          <label className="flex-1 bg-black hover:bg-neutral-800 text-white font-mono text-xs uppercase font-bold py-2.5 px-4 rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all">
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>{paymentSettingsForm.bank.qrCodeUrl ? 'Replace QR' : 'Upload QR'}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleUploadPaymentQr(e, 'bank')}
+                              className="hidden"
+                            />
+                          </label>
+
+                          {paymentSettingsForm.bank.qrCodeUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPaymentSettingsForm((prev) => ({
+                                  ...prev,
+                                  bank: { ...prev.bank, qrCodeUrl: '' },
+                                }))
+                              }
+                              className="px-3 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-mono text-xs font-bold rounded-xl transition-colors"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-neutral-500 font-sans">
+                          Upload clear bank QR screenshot directly from your phone gallery or camera.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CASH ON DELIVERY CONFIG CARD */}
+                  <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between pb-4 border-b border-neutral-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-neutral-100 text-neutral-900 flex items-center justify-center font-bold">
+                          <Truck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-base text-neutral-900">Cash on Delivery (COD)</h3>
+                          <p className="text-xs text-neutral-500 font-mono">Manage doorstep cash payment rules and instructions</p>
+                        </div>
+                      </div>
+
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={paymentSettingsForm.cod.enabled}
+                          onChange={(e) =>
+                            setPaymentSettingsForm((prev) => ({
+                              ...prev,
+                              cod: { ...prev.cod, enabled: e.target.checked },
+                            }))
+                          }
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-black"></div>
+                        <span className="ml-2 font-mono text-xs font-bold text-neutral-700">
+                          {paymentSettingsForm.cod.enabled ? 'ACTIVE' : 'DISABLED'}
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                          COD Method Name
+                        </label>
+                        <input
+                          type="text"
+                          value={paymentSettingsForm.cod.name}
+                          onChange={(e) =>
+                            setPaymentSettingsForm((prev) => ({
+                              ...prev,
+                              cod: { ...prev.cod, name: e.target.value },
+                            }))
+                          }
+                          placeholder="e.g. Cash on Delivery (COD)"
+                          className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono focus:outline-none focus:border-black"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block font-mono text-xs font-bold text-neutral-700 mb-1">
+                          Doorstep Instructions
+                        </label>
+                        <input
+                          type="text"
+                          value={paymentSettingsForm.cod.instructions}
+                          onChange={(e) =>
+                            setPaymentSettingsForm((prev) => ({
+                              ...prev,
+                              cod: { ...prev.cod, instructions: e.target.value },
+                            }))
+                          }
+                          placeholder="Pay cash to courier upon delivery"
+                          className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-sans focus:outline-none focus:border-black"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ============================================================= */}
+            {/* TAB 7: SETTINGS */}
             {/* ============================================================= */}
             {activeTab === 'SETTINGS' && (
               <div className="space-y-6 max-w-4xl">
@@ -1626,22 +2943,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     Store Settings &amp; Authorized Admins
                   </h1>
                   <p className="text-xs text-neutral-500 mt-0.5">
-                    Authorized Google accounts and cache tools.
+                    System tools, cache controls, and team administrative accounts.
                   </p>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-sm space-y-3">
-                  <h3 className="font-bold text-sm text-neutral-900">
-                    Authorized Google Admin Accounts
-                  </h3>
+                {/* Team Admins Quick Card */}
+                <div className="bg-white p-5 sm:p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-sm text-neutral-900">
+                        Admin Team Management
+                      </h3>
+                      <p className="text-xs text-neutral-500 mt-0.5">
+                        Manage Gmail accounts with access to the NANGSAL control desk.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('ADMINS')}
+                      className="px-3.5 py-1.5 bg-[#E0533C] hover:bg-[#c94530] text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Manage Admins ({adminUsers.length})</span>
+                    </button>
+                  </div>
+
                   <div className="divide-y divide-neutral-100">
-                    {AUTHORIZED_ADMIN_EMAILS.map((email) => (
-                      <div key={email} className="py-2.5 flex items-center justify-between text-xs">
-                        <span className="font-mono font-semibold text-neutral-800">
-                          {email}
-                        </span>
+                    {adminUsers.slice(0, 4).map((admin) => (
+                      <div key={admin.id || admin.email} className="py-2.5 flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <span className="font-mono font-semibold text-neutral-800">
+                            {admin.email}
+                          </span>
+                        </div>
                         <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-mono text-[10px] font-bold">
-                          SUPER ADMIN
+                          {admin.role.replace('_', ' ')}
                         </span>
                       </div>
                     ))}
@@ -1674,7 +3011,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* =================================================================== */}
       {/* MOBILE BOTTOM NAVIGATION BAR (< 768px) */}
       {/* =================================================================== */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-neutral-200 px-2 py-1.5 flex items-center justify-around shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-neutral-200 px-1 py-1 flex items-center justify-around overflow-x-auto no-scrollbar shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -1682,19 +3019,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl transition-all relative ${
+              className={`flex flex-col items-center justify-center py-1 px-1.5 sm:px-2 rounded-xl transition-all relative flex-shrink-0 ${
                 isActive ? 'text-[#E0533C]' : 'text-neutral-500'
               }`}
             >
               <div className="relative">
-                <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.2]' : 'stroke-[1.5]'}`} />
+                <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${isActive ? 'stroke-[2.2]' : 'stroke-[1.5]'}`} />
                 {item.badge !== null && item.badge !== undefined && (
-                  <span className="absolute -top-1 -right-2 px-1.5 py-0.2 bg-[#E0533C] text-white text-[9px] font-mono font-bold rounded-full">
+                  <span className="absolute -top-1 -right-2 px-1 py-0.2 bg-[#E0533C] text-white text-[8px] font-mono font-bold rounded-full">
                     {item.badge}
                   </span>
                 )}
               </div>
-              <span className={`text-[10px] font-mono tracking-tight mt-0.5 ${isActive ? 'font-bold' : 'font-normal'}`}>
+              <span className={`text-[9px] sm:text-[10px] font-mono tracking-tight mt-0.5 ${isActive ? 'font-bold' : 'font-normal'}`}>
                 {item.label}
               </span>
             </button>
