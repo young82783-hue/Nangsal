@@ -1,10 +1,9 @@
 import React from 'react';
-import { Instagram, Shield } from 'lucide-react';
+import { Instagram } from 'lucide-react';
 import { WhatsAppIcon, TikTokIcon } from './SocialIcons';
 
 interface FooterProps {
   onOpenHelp?: () => void;
-  onOpenAdmin?: () => void;
   onNavigateHome?: () => void;
   onNavigateTerms?: () => void;
   onNavigatePrivacy?: () => void;
@@ -14,7 +13,6 @@ interface FooterProps {
 
 export const Footer: React.FC<FooterProps> = ({
   onOpenHelp,
-  onOpenAdmin,
   onNavigateHome,
   onNavigateTerms,
   onNavigatePrivacy,
@@ -85,16 +83,6 @@ export const Footer: React.FC<FooterProps> = ({
               >
                 Contact
               </button>
-
-              {onOpenAdmin && (
-                <button
-                  onClick={onOpenAdmin}
-                  className="text-neutral-400 hover:text-[#D85A38] transition-colors flex items-center gap-1"
-                >
-                  <Shield className="w-3 h-3" />
-                  <span>Admin</span>
-                </button>
-              )}
             </nav>
 
             {/* Social Media Icons Only */}

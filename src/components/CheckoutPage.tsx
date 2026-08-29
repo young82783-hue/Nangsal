@@ -3,6 +3,7 @@ import { CartItem } from './CartDrawer';
 import { DELIVERY_LOCATIONS, DeliveryLocation } from '../data/deliveryLocations';
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { deductOrderStock } from '../lib/stockManager';
 import {
   ArrowLeft,
   Search,
@@ -140,28 +141,38 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     grandTot: number
   ) => {
     const itemsFormatted = itemsList
-      .map((it) => `• ${it.quantity}x ${it.product.name} (Size: ${it.size}) - Rs. ${(it.product.rawPrice * it.quantity).toLocaleString()}`)
+      .map(
+        (it) =>
+          `• ${it.quantity}x ${it.product.name} (Size: ${it.size}) @ Rs. ${it.product.rawPrice.toLocaleString()} = Rs. ${(
+            it.product.rawPrice * it.quantity
+          ).toLocaleString()}`
+      )
       .join('\n');
+
+    const paymentDetails =
+      method === 'COD'
+        ? '💵 Cash on Delivery (To be paid upon delivery)'
+        : `💳 ${method} Transfer (✓ Screenshot uploaded & verified in system)`;
 
     const rawMessage = `🛍️ *NEW ORDER - NANGSAL APPAREL*
 ━━━━━━━━━━━━━━━━━━━━━
 *Order ID:* ${orderId}
-*Customer:* ${custName}
-*Phone:* ${custPhone}
-*Address:* ${custAddr}
-*Delivery Location:* ${loc.name}, ${loc.district} (${loc.zoneLabel} - Rs. ${shipFee})
+*Customer Name:* ${custName}
+*Phone Number:* ${custPhone}
+*Full Delivery Address:* ${custAddr}
+*Location/City:* ${loc.name}, ${loc.district}
+*Delivery Zone:* ${loc.zoneLabel}
 
-*ITEMS:*
+*ORDERED PRODUCTS:*
 ${itemsFormatted}
 
-*PAYMENT SUMMARY:*
-Subtotal: Rs. ${subTot.toLocaleString()}
-Delivery: Rs. ${shipFee.toLocaleString()}
-*Total Amount: Rs. ${grandTot.toLocaleString()}*
-*Payment Method:* ${method}
-${method !== 'COD' ? '✓ Payment Screenshot Uploaded to System' : 'Cash to be collected upon delivery'}
+*BILLING & PAYMENT SUMMARY:*
+• Items Subtotal: Rs. ${subTot.toLocaleString()}
+• Delivery Fee: Rs. ${shipFee.toLocaleString()}
+• *TOTAL AMOUNT: Rs. ${grandTot.toLocaleString()}*
+• *Payment Method:* ${paymentDetails}
 ━━━━━━━━━━━━━━━━━━━━━
-Please confirm order verification & dispatch schedule.`;
+_Please verify my order in the Admin System and confirm the dispatch schedule. Thank you!_`;
 
     const encoded = encodeURIComponent(rawMessage);
     return `https://wa.me/9779847459808?text=${encoded}`;
@@ -255,7 +266,18 @@ Please confirm order verification & dispatch schedule.`;
       // 1. Save permanently to Firestore orders collection
       await setDoc(doc(db, 'orders', orderDocId), orderPayload);
 
-      // 2. Generate WhatsApp link
+      // 2. Automatically deduct stock for all ordered items from Firestore
+      await deductOrderStock(
+        cart.map((item) => ({
+          productId: item.product.productId || item.product.id,
+          id: item.product.id,
+          size: item.size,
+          quantity: item.quantity,
+          name: item.product.name,
+        }))
+      );
+
+      // 3. Generate WhatsApp link
       const waUrl = generateWhatsAppUrl(
         orderId,
         fullName.trim(),
@@ -269,10 +291,10 @@ Please confirm order verification & dispatch schedule.`;
         totalAmount
       );
 
-      // 3. Clear cart from state & localStorage
+      // 4. Clear cart from state & localStorage
       onClearCart();
 
-      // 4. Update UI to Confirmation State
+      // 5. Update UI to Confirmation State
       setConfirmedOrder({
         orderId,
         fullName: fullName.trim(),
@@ -284,7 +306,7 @@ Please confirm order verification & dispatch schedule.`;
         whatsAppUrl: waUrl,
       });
 
-      // 5. Open WhatsApp in new window/tab safely
+      // 6. Open WhatsApp in new window/tab safely
       try {
         window.open(waUrl, '_blank', 'noopener,noreferrer');
       } catch (err) {

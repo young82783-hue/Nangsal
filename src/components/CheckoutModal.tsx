@@ -4,6 +4,7 @@ import { X, CheckCircle2, Copy, Check, Upload, ArrowRight, ShieldCheck, QrCode, 
 import { WhatsAppIcon } from './SocialIcons';
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { deductOrderStock } from '../lib/stockManager';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -111,6 +112,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     try {
       const path = `orders/${orderDocId}`;
       await setDoc(doc(db, 'orders', orderDocId), cleanPayload);
+      
+      // Automatically deduct stock for ordered items
+      try {
+        await deductOrderStock(
+          cart.map((item) => ({
+            productId: item.product.productId || item.product.id,
+            id: item.product.id,
+            size: item.size,
+            quantity: item.quantity,
+            name: item.product.name,
+          }))
+        );
+      } catch (stockErr) {
+        console.warn('Stock deduction background warning:', stockErr);
+      }
+
       setConfirmedOrderId(orderNumber);
       setStep('CONFIRMATION');
       onClearCart();

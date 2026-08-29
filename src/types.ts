@@ -53,6 +53,13 @@ export interface Banner {
 }
 
 // 3. Admin Collection Entity
+export interface CustomNavButton {
+  id: string;
+  label: string;
+  category: 'ALL' | 'T-SHIRTS' | 'HOODIES' | 'OUTERWEAR';
+  isActive: boolean;
+}
+
 export interface AdminPermissions {
   canManageProducts: boolean;
   canManageBanners: boolean;
@@ -167,6 +174,7 @@ export interface SiteBannerContent {
   photoTopRight: string;
   photoBottomRight: string;
   announcementText: string;
+  navButtons?: CustomNavButton[];
   version?: number | string;
   updatedAt?: any;
 }

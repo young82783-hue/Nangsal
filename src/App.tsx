@@ -272,11 +272,14 @@ export default function App() {
         cartCount={cartCount}
         isCartBlinking={isCartBlinking}
         announcementText={siteContent?.announcementText || 'NEW DROP LIVE NOW.'}
+        navButtons={siteContent?.navButtons}
+        activeCategory={activeCategory}
         onOpenCart={() => setIsCartOpen(true)}
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenHelp={() => navigateTo('contact')}
         onOpenTerms={() => navigateTo('terms')}
-        onOpenAdmin={() => setIsAdminOpen(true)}
+        onNavigatePrivacy={() => navigateTo('privacy')}
+        onNavigateExchange={() => navigateTo('exchange')}
         onNavigateHome={() => navigateTo('home')}
         onSelectCategory={(category) => {
           navigateTo('home');
@@ -349,10 +352,9 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer with Terms, Privacy, Exchange, Contact & Admin shortcuts */}
+      {/* Footer with Terms, Privacy, Exchange, and Contact links */}
       <Footer
         onOpenHelp={() => navigateTo('contact')}
-        onOpenAdmin={() => setIsAdminOpen(true)}
         onNavigateHome={() => navigateTo('home')}
         onNavigateTerms={() => navigateTo('terms')}
         onNavigatePrivacy={() => navigateTo('privacy')}
@@ -399,13 +401,24 @@ export default function App() {
         onClose={() => setIsHelpOpen(false)}
       />
 
-      {/* Admin Control Desk Modal */}
+      {/* Admin Control Desk Modal - Accessible exclusively via direct URL (e.g. domain/admin or domain/#admin) */}
       <AdminPanel
         isOpen={isAdminOpen}
-        onClose={() => setIsAdminOpen(false)}
+        onClose={() => {
+          setIsAdminOpen(false);
+          if (typeof window !== 'undefined' && checkIsAdminRoute()) {
+            window.history.pushState({}, '', '/');
+          }
+        }}
         siteContent={siteContent || DEFAULT_SITE_CONTENT}
         products={liveProducts}
-        onNavigateHome={() => navigateTo('home')}
+        onNavigateHome={() => {
+          setIsAdminOpen(false);
+          if (typeof window !== 'undefined' && checkIsAdminRoute()) {
+            window.history.pushState({}, '', '/');
+          }
+          navigateTo('home');
+        }}
       />
     </div>
   );

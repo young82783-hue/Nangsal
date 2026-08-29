@@ -39,6 +39,8 @@ import {
   Menu,
   Bell,
   Lock,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import {
   signInWithPopup,
@@ -62,12 +64,14 @@ import { uploadImageToStorage } from '../lib/storageManager';
 import {
   SiteBannerContent,
   DEFAULT_SITE_CONTENT,
+  DEFAULT_NAV_BUTTONS,
   updateSiteContent,
   saveProduct,
   deleteProduct,
 } from '../lib/siteContent';
-import { Product } from '../types';
+import { Product, CustomNavButton } from '../types';
 import { purgeStaleCaches, forceHardReload } from '../lib/cacheManager';
+import { replenishOrderStock } from '../lib/stockManager';
 
 // Allowed Super Admin Google Emails
 const AUTHORIZED_ADMIN_EMAILS = [
@@ -89,7 +93,6 @@ type AdminTab =
   | 'ORDERS'
   | 'PRODUCTS'
   | 'STOCK'
-  | 'IMAGES'
   | 'BANNERS'
   | 'SETTINGS';
 
@@ -120,6 +123,7 @@ interface OrderItem {
     image?: string;
   }>;
   status: 'PENDING_VERIFICATION' | 'PROCESSING' | 'DISPATCHED' | 'DELIVERED' | 'CANCELLED';
+  paymentStatus?: string;
   uploadedReceipt?: string;
   paymentScreenshot?: string;
   transactionId?: string;
@@ -157,10 +161,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Product Editing State
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
+  const [editingProductStock, setEditingProductStock] = useState<Record<string, number>>({});
   const [isNewProduct, setIsNewProduct] = useState(false);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [productImagesInput, setProductImagesInput] = useState<string[]>([]);
-  const [directImageUrlInput, setDirectImageUrlInput] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Banner Editing State
@@ -168,11 +172,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isSavingBanners, setIsSavingBanners] = useState(false);
   const [bannerSaveSuccess, setBannerSaveSuccess] = useState(false);
   const [uploadingBannerField, setUploadingBannerField] = useState<string | null>(null);
-
-  // Image Library Upload State
-  const [uploadedGallery, setUploadedGallery] = useState<string[]>([]);
-  const [isUploadingGallery, setIsUploadingGallery] = useState(false);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
   // Settings State
   const [storeWhatsApp, setStoreWhatsApp] = useState('9847459808');
@@ -330,16 +329,77 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderItem['status']) => {
     try {
       const orderRef = doc(db, 'orders', orderId);
+      const prevOrder = liveOrders.find((o) => o.id === orderId);
+
       await updateDoc(orderRef, {
         status: newStatus,
+        orderStatus: newStatus,
         updatedAt: serverTimestamp(),
       });
+
+      // If status changed to CANCELLED and was not previously CANCELLED, restore stock
+      if (newStatus === 'CANCELLED' && prevOrder && prevOrder.status !== 'CANCELLED' && prevOrder.items) {
+        await replenishOrderStock(prevOrder.items);
+      }
+
+      if (selectedOrderDetails && selectedOrderDetails.id === orderId) {
+        setSelectedOrderDetails((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
     } catch (e) {
       console.error('Failed to update order status:', e);
+      alert('Failed to update order status.');
     }
   };
 
-  // Handler to Save Product (Add or Edit)
+  // Helper to open Add Product Modal with clean defaults & stock
+  const handleOpenAddProductModal = () => {
+    const defaultSizes = ['S', 'M', 'L', 'XL'];
+    setEditingProduct({
+      sizes: defaultSizes,
+      availableSizes: defaultSizes,
+      category: 'T-SHIRTS',
+      gender: 'UNISEX',
+      inStock: true,
+      isActive: true,
+      price: 'Rs. 2,500',
+      name: '',
+      description: '',
+      image: '',
+      images: [],
+    });
+    const initialStock: Record<string, number> = {};
+    defaultSizes.forEach((sz) => {
+      initialStock[sz] = 25;
+    });
+    setEditingProductStock(initialStock);
+    setIsNewProduct(true);
+    setProductImagesInput([]);
+    setIsProductModalOpen(true);
+  };
+
+  // Helper to open Edit Product Modal and load stock records
+  const handleOpenEditProductModal = (product: Product) => {
+    setEditingProduct(product);
+    setIsNewProduct(false);
+    setProductImagesInput(
+      Array.isArray(product.images) && product.images.length > 0
+        ? product.images
+        : [product.image].filter(Boolean)
+    );
+    const loadedStock: Record<string, number> = {};
+    const productSizes =
+      product.sizes && product.sizes.length > 0 ? product.sizes : ['S', 'M', 'L', 'XL'];
+    productSizes.forEach((sz) => {
+      const stockDoc = stockRecords.find(
+        (s) => s.productId === product.id && s.size === sz
+      );
+      loadedStock[sz] = stockDoc?.availableQuantity ?? 25;
+    });
+    setEditingProductStock(loadedStock);
+    setIsProductModalOpen(true);
+  };
+
+  // Handler to Save Product (Add or Edit) with per-size Stock saving
   const handleSaveProductForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProduct || !editingProduct.name || !editingProduct.price) {
@@ -357,6 +417,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         Number(
           String(editingProduct.price || '0').replace(/[^0-9.]/g, '')
         ) || editingProduct.rawPrice || 0;
+
+      const productSizes =
+        editingProduct.sizes && editingProduct.sizes.length > 0
+          ? editingProduct.sizes
+          : ['S', 'M', 'L', 'XL'];
+
+      const availableSizes = productSizes.filter(
+        (sz) => (editingProductStock[sz] ?? 25) > 0
+      );
 
       const fullProduct: Product = {
         id: productId,
@@ -376,22 +445,51 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             ? productImagesInput
             : editingProduct.images || [editingProduct.image || ''],
         description: editingProduct.description || '',
-        inStock: editingProduct.inStock !== false,
-        sizes:
-          editingProduct.sizes && editingProduct.sizes.length > 0
-            ? editingProduct.sizes
-            : ['S', 'M', 'L', 'XL'],
+        inStock: availableSizes.length > 0 && editingProduct.inStock !== false,
+        sizes: productSizes,
         availableSizes:
-          editingProduct.availableSizes && editingProduct.availableSizes.length > 0
-            ? editingProduct.availableSizes
-            : editingProduct.sizes || ['S', 'M', 'L', 'XL'],
+          availableSizes.length > 0
+            ? availableSizes
+            : editingProduct.inStock !== false
+            ? productSizes
+            : [],
         isActive: editingProduct.isActive !== false,
         isBestSeller: Boolean(editingProduct.isBestSeller),
         gender: (editingProduct.gender as any) || 'UNISEX',
-        sortOrder: typeof editingProduct.sortOrder === 'number' ? editingProduct.sortOrder : products.length + 1,
+        sortOrder:
+          typeof editingProduct.sortOrder === 'number'
+            ? editingProduct.sortOrder
+            : products.length + 1,
       };
 
       await saveProduct(fullProduct);
+
+      // Save stock records in Firestore for each enabled size
+      for (const sz of productSizes) {
+        const stockId = `${productId}_${sz}`;
+        const stockQty =
+          typeof editingProductStock[sz] === 'number'
+            ? Math.max(0, editingProductStock[sz])
+            : 25;
+        try {
+          await setDoc(
+            doc(db, 'stocks', stockId),
+            {
+              id: stockId,
+              productId,
+              productName: fullProduct.name,
+              size: sz,
+              availableQuantity: stockQty,
+              sku: `${productId.toUpperCase()}-${sz}`,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } catch (stockErr) {
+          console.warn(`Failed to sync stock doc for ${stockId}:`, stockErr);
+        }
+      }
+
       setIsProductModalOpen(false);
       setEditingProduct(null);
       setProductImagesInput([]);
@@ -405,7 +503,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Handler to Delete Product
   const handleDeleteProduct = async (productId: string, productName: string) => {
-    if (confirm(`Are you sure you want to permanently delete "${productName}" from the store catalog?`)) {
+    if (
+      confirm(
+        `Are you sure you want to permanently delete "${productName}" from the store catalog?`
+      )
+    ) {
       try {
         await deleteProduct(productId);
       } catch (err) {
@@ -415,30 +517,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Handler to Adjust Stock for a size
-  const handleAdjustStock = async (
+  // Handler to set exact stock for a size
+  const handleSetExactStock = async (
     productId: string,
     size: string,
-    delta: number,
-    currentQty: number
+    exactQty: number
   ) => {
     const stockId = `${productId}_${size}`;
-    const newQty = Math.max(0, currentQty + delta);
+    const newQty = Math.max(0, exactQty);
     try {
+      const prod = products.find((p) => p.id === productId);
       await setDoc(
         doc(db, 'stocks', stockId),
         {
           id: stockId,
           productId,
+          productName: prod?.name || '',
           size,
           availableQuantity: newQty,
+          sku: `${productId.toUpperCase()}-${size}`,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
 
       // Check if product needs stock update
-      const prod = products.find((p) => p.id === productId);
       if (prod) {
         let updatedAvailable = [...(prod.availableSizes || prod.sizes || [])];
         if (newQty === 0) {
@@ -455,6 +558,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (e) {
       console.error('Failed to update stock:', e);
     }
+  };
+
+  // Handler to Adjust Stock for a size by +/- delta
+  const handleAdjustStock = async (
+    productId: string,
+    size: string,
+    delta: number,
+    currentQty: number
+  ) => {
+    const newQty = Math.max(0, currentQty + delta);
+    await handleSetExactStock(productId, size, newQty);
   };
 
   // Handler to Save Banners & Site Content
@@ -474,8 +588,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Image Upload helper for Product Images
-  const handleUploadProductImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Image Upload helper for Product Images (Device Gallery Upload)
+  const handleUploadProductImageFile = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setIsUploadingImage(true);
@@ -489,32 +605,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setProductImagesInput((prev) => [...prev, ...urls]);
     } catch (err: any) {
       console.error('Image upload failed:', err);
-      alert('Failed to upload image. Please check format or try a direct URL.');
+      alert('Failed to upload image. Please try again.');
     } finally {
       setIsUploadingImage(false);
     }
   };
 
-  // Image Upload helper for General Gallery
-  const handleUploadGalleryImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    setIsUploadingGallery(true);
-    try {
-      const urls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const url = await uploadImageToStorage(files[i], 'general');
-        urls.push(url);
-      }
-      setUploadedGallery((prev) => [...urls, ...prev]);
-    } catch (e) {
-      console.error('Gallery upload failed:', e);
-    } finally {
-      setIsUploadingGallery(false);
-    }
-  };
-
-  // Dedicated helper to upload image for any specific banner field
+  // Dedicated helper to upload media file for any specific banner field
   const handleUploadBannerPhoto = async (
     fieldKey: keyof SiteBannerContent,
     e: React.ChangeEvent<HTMLInputElement>
@@ -530,20 +627,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       }));
     } catch (err) {
       console.error(`Upload failed for banner field ${String(fieldKey)}:`, err);
-      alert('Failed to upload banner image. Please try again.');
+      alert('Failed to upload banner media. Please try again.');
     } finally {
       setUploadingBannerField(null);
     }
-  };
-
-  // Helper to add direct image URL to product
-  const handleAddDirectImageUrl = () => {
-    const trimmed = directImageUrlInput.trim();
-    if (!trimmed) return;
-    if (!productImagesInput.includes(trimmed)) {
-      setProductImagesInput((prev) => [...prev, trimmed]);
-    }
-    setDirectImageUrlInput('');
   };
 
   // Helper to set image as primary main image
@@ -763,11 +850,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   icon: Boxes,
                 },
                 {
-                  id: 'IMAGES',
-                  label: 'Images',
-                  icon: ImageIcon,
-                },
-                {
                   id: 'BANNERS',
                   label: 'Banners',
                   icon: Sparkles,
@@ -965,121 +1047,65 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 </div>
 
-                {/* Quick Actions & Recent Orders */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  {/* Recent Orders Preview */}
-                  <div className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-sm p-5 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-sm text-neutral-900">
-                        Recent Orders
-                      </h3>
-                      <button
-                        onClick={() => setActiveTab('ORDERS')}
-                        className="text-xs text-[#E0533C] font-semibold hover:underline"
-                      >
-                        View All ({liveOrders.length})
-                      </button>
-                    </div>
-
-                    {liveOrders.length === 0 ? (
-                      <div className="py-8 text-center text-xs text-neutral-400 font-mono">
-                        No orders recorded yet. Live orders will populate automatically.
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-neutral-100">
-                        {liveOrders.slice(0, 5).map((order) => (
-                          <div
-                            key={order.id}
-                            className="py-3 flex items-center justify-between text-xs"
-                          >
-                            <div className="space-y-0.5">
-                              <p className="font-bold text-neutral-900">
-                                {order.fullName}{' '}
-                                <span className="font-mono text-neutral-400 font-normal">
-                                  ({order.id.slice(0, 8)})
-                                </span>
-                              </p>
-                              <p className="text-[11px] text-neutral-500 font-mono">
-                                {order.items?.length || 1} items &bull;{' '}
-                                {order.paymentMethod}
-                              </p>
-                            </div>
-                            <div className="text-right space-y-1">
-                              <p className="font-mono font-bold text-neutral-900">
-                                Rs. {order.totalAmount?.toLocaleString()}
-                              </p>
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                                  order.status === 'DELIVERED'
-                                    ? 'bg-purple-50 text-purple-700'
-                                    : order.status === 'DISPATCHED'
-                                    ? 'bg-blue-50 text-blue-700'
-                                    : order.status === 'CANCELLED'
-                                    ? 'bg-red-50 text-red-700'
-                                    : 'bg-amber-50 text-amber-700'
-                                }`}
-                              >
-                                {order.status}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Fast Action Shortcuts */}
-                  <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-5 space-y-3">
+                {/* Recent Orders */}
+                <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-5 space-y-4">
+                  <div className="flex items-center justify-between">
                     <h3 className="font-bold text-sm text-neutral-900">
-                      Quick Store Actions
+                      Recent Orders
                     </h3>
-                    <div className="space-y-2">
-                      <button
-                        onClick={() => {
-                          setEditingProduct({
-                            sizes: ['S', 'M', 'L', 'XL'],
-                            availableSizes: ['S', 'M', 'L', 'XL'],
-                            category: 'T-SHIRTS',
-                            gender: 'UNISEX',
-                            inStock: true,
-                            isActive: true,
-                          });
-                          setIsNewProduct(true);
-                          setProductImagesInput([]);
-                          setIsProductModalOpen(true);
-                        }}
-                        className="w-full py-2.5 px-3 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl text-xs font-semibold flex items-center justify-between transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Plus className="w-4 h-4" />
-                          <span>Add New Product</span>
-                        </div>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => setActiveTab('STOCK')}
-                        className="w-full py-2.5 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-semibold flex items-center justify-between transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Boxes className="w-4 h-4" />
-                          <span>Manage Stock by Size</span>
-                        </div>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => setActiveTab('BANNERS')}
-                        className="w-full py-2.5 px-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-semibold flex items-center justify-between transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-4 h-4" />
-                          <span>Update Hero Banners</span>
-                        </div>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setActiveTab('ORDERS')}
+                      className="text-xs text-[#E0533C] font-semibold hover:underline"
+                    >
+                      View All ({liveOrders.length})
+                    </button>
                   </div>
+
+                  {liveOrders.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-neutral-400 font-mono">
+                      No orders recorded yet. Live orders will populate automatically.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-neutral-100">
+                      {liveOrders.slice(0, 6).map((order) => (
+                        <div
+                          key={order.id}
+                          className="py-3 flex items-center justify-between text-xs"
+                        >
+                          <div className="space-y-0.5">
+                            <p className="font-bold text-neutral-900">
+                              {order.fullName}{' '}
+                              <span className="font-mono text-neutral-400 font-normal">
+                                ({order.id.slice(0, 8)})
+                              </span>
+                            </p>
+                            <p className="text-[11px] text-neutral-500 font-mono">
+                              {order.items?.length || 1} items &bull;{' '}
+                              {order.paymentMethod}
+                            </p>
+                          </div>
+                          <div className="text-right space-y-1">
+                            <p className="font-mono font-bold text-neutral-900">
+                              Rs. {order.totalAmount?.toLocaleString()}
+                            </p>
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                                order.status === 'DELIVERED'
+                                  ? 'bg-purple-50 text-purple-700'
+                                  : order.status === 'DISPATCHED'
+                                  ? 'bg-blue-50 text-blue-700'
+                                  : order.status === 'CANCELLED'
+                                  ? 'bg-red-50 text-red-700'
+                                  : 'bg-amber-50 text-amber-700'
+                              }`}
+                            >
+                              {order.status}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1294,20 +1320,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
 
                   <button
-                    onClick={() => {
-                      setEditingProduct({
-                        sizes: ['S', 'M', 'L', 'XL'],
-                        availableSizes: ['S', 'M', 'L', 'XL'],
-                        category: 'T-SHIRTS',
-                        gender: 'UNISEX',
-                        inStock: true,
-                        isActive: true,
-                        price: 'Rs. 2,500',
-                      });
-                      setIsNewProduct(true);
-                      setProductImagesInput([]);
-                      setIsProductModalOpen(true);
-                    }}
+                    onClick={handleOpenAddProductModal}
                     className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors self-start"
                   >
                     <Plus className="w-4 h-4" />
@@ -1369,16 +1382,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       {/* Action Bar */}
                       <div className="p-4 pt-0 flex items-center justify-between border-t border-neutral-100/60 mt-2">
                         <button
-                          onClick={() => {
-                            setEditingProduct(product);
-                            setIsNewProduct(false);
-                            setProductImagesInput(
-                              Array.isArray(product.images) && product.images.length > 0
-                                ? product.images
-                                : [product.image]
-                            );
-                            setIsProductModalOpen(true);
-                          }}
+                          onClick={() => handleOpenEditProductModal(product)}
                           className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -1445,28 +1449,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           return (
                             <div
                               key={size}
-                              className={`p-2.5 rounded-xl border flex items-center gap-2 ${
+                              className={`p-2 rounded-xl border flex items-center gap-1.5 ${
                                 isAvailable && qty > 0
                                   ? 'bg-neutral-50 border-neutral-200'
                                   : 'bg-red-50/60 border-red-200 text-red-800'
                               }`}
                             >
-                              <span className="font-mono font-bold text-xs uppercase w-6">
+                              <span className="font-mono font-bold text-xs uppercase w-6 text-center">
                                 {size}:
                               </span>
 
                               <button
+                                type="button"
                                 onClick={() => handleAdjustStock(product.id, size, -1, qty)}
                                 className="w-6 h-6 rounded bg-white hover:bg-neutral-200 border border-neutral-200 flex items-center justify-center font-bold text-xs"
                               >
                                 -
                               </button>
 
-                              <span className="font-mono font-bold text-xs min-w-[20px] text-center">
-                                {qty}
-                              </span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={qty}
+                                onChange={(e) => {
+                                  const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  handleSetExactStock(product.id, size, val);
+                                }}
+                                className="w-12 text-center font-mono font-bold text-xs bg-white border border-neutral-200 rounded py-0.5 focus:outline-none focus:ring-1 focus:ring-black"
+                              />
 
                               <button
+                                type="button"
                                 onClick={() => handleAdjustStock(product.id, size, +1, qty)}
                                 className="w-6 h-6 rounded bg-white hover:bg-neutral-200 border border-neutral-200 flex items-center justify-center font-bold text-xs"
                               >
@@ -1483,85 +1496,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             )}
 
             {/* ============================================================= */}
-            {/* TAB 5: IMAGE ASSETS & FIREBASE STORAGE */}
-            {/* ============================================================= */}
-            {activeTab === 'IMAGES' && (
-              <div className="space-y-6 max-w-6xl">
-                <div>
-                  <h1 className="text-xl sm:text-2xl font-bold text-neutral-900 tracking-tight">
-                    Image Asset Library
-                  </h1>
-                  <p className="text-xs text-neutral-500 mt-0.5">
-                    Upload and manage high-resolution photos and banners stored on Firebase.
-                  </p>
-                </div>
-
-                {/* Upload Box */}
-                <div className="bg-white p-6 rounded-2xl border-2 border-dashed border-neutral-200 text-center space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-neutral-50 flex items-center justify-center mx-auto text-neutral-400">
-                    <Upload className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-neutral-900">
-                      Upload Photos to Firebase Storage
-                    </p>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Select JPG, PNG, WEBP files to generate instant CDN URLs.
-                    </p>
-                  </div>
-
-                  <label className="inline-block px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors">
-                    <span>{isUploadingGallery ? 'Uploading...' : 'Browse Images'}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handleUploadGalleryImage}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                {/* Uploaded Gallery Grid */}
-                {uploadedGallery.length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="font-bold text-sm text-neutral-900">
-                      Recently Uploaded Assets
-                    </h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                      {uploadedGallery.map((imgUrl, i) => (
-                        <div
-                          key={i}
-                          className="relative aspect-square rounded-2xl overflow-hidden border border-neutral-100 group shadow-sm bg-neutral-100"
-                        >
-                          <img
-                            src={imgUrl}
-                            alt="Asset"
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(imgUrl);
-                                setCopiedUrl(imgUrl);
-                                setTimeout(() => setCopiedUrl(null), 2000);
-                              }}
-                              className="p-2 rounded-xl bg-white text-neutral-900 hover:bg-neutral-100 text-xs font-mono font-bold flex items-center gap-1"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>{copiedUrl === imgUrl ? 'Copied!' : 'Copy URL'}</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ============================================================= */}
-            {/* TAB 6: BANNERS & DYNAMIC SITE CONTENT */}
+            {/* TAB 5: BANNERS & DYNAMIC SITE CONTENT */}
             {/* ============================================================= */}
             {activeTab === 'BANNERS' && (
               <form onSubmit={handleSaveBanners} className="space-y-6 max-w-5xl">
@@ -1602,19 +1537,58 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-mono font-bold text-neutral-600 uppercase mb-1">
-                        Hero Video URL (.mp4)
-                      </label>
-                      <input
-                        type="text"
-                        value={bannerForm.heroVideoUrl || ''}
-                        onChange={(e) =>
-                          setBannerForm({ ...bannerForm, heroVideoUrl: e.target.value })
-                        }
-                        className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono"
-                        placeholder="https://cdn.phototourl.com/...mp4"
-                      />
+                    <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-mono font-bold text-neutral-800 uppercase">
+                          Hero Video or Photo
+                        </label>
+                        <label className="text-xs font-mono font-bold bg-neutral-900 text-white px-3 py-1.5 rounded-xl hover:bg-neutral-800 cursor-pointer flex items-center gap-1.5 transition-colors">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{uploadingBannerField === 'heroVideoUrl' ? 'Uploading Media...' : 'Upload from Device'}</span>
+                          <input
+                            type="file"
+                            accept="video/*,image/*"
+                            onChange={(e) => handleUploadBannerPhoto('heroVideoUrl', e)}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+
+                      {bannerForm.heroVideoUrl ? (
+                        <div className="flex items-center gap-3">
+                          <div className="w-36 h-20 bg-black rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300 relative">
+                            {bannerForm.heroVideoUrl.includes('.mp4') || bannerForm.heroVideoUrl.includes('video') ? (
+                              <video
+                                src={bannerForm.heroVideoUrl}
+                                autoPlay
+                                loop
+                                muted
+                                playsInline
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <img
+                                src={bannerForm.heroVideoUrl}
+                                alt="Hero Media"
+                                className="w-full h-full object-cover"
+                              />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, heroVideoUrl: '' })}
+                            className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-xl border border-red-200 transition-colors"
+                          >
+                            Remove Media
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="py-4 text-center border-2 border-dashed border-neutral-200 rounded-xl">
+                          <p className="text-xs text-neutral-400 font-mono">
+                            No media uploaded yet. Click &quot;Upload from Device&quot; to choose a video or picture.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -1640,10 +1614,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <ImageIcon className="w-4 h-4 text-neutral-800" />
                     <div>
                       <h3 className="font-bold text-sm text-neutral-900">
-                        "More Than Clothes" Lookbook Photos
+                        &quot;More Than Clothes&quot; Lookbook Photos
                       </h3>
                       <p className="text-xs text-neutral-400">
-                        Upload or replace high-resolution images for the 4-photo lookbook grid.
+                        Upload high-resolution images directly from your device gallery.
                       </p>
                     </div>
                   </div>
@@ -1655,9 +1629,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <span className="text-xs font-mono font-bold text-neutral-800 uppercase">
                           Photo 1: Top Left
                         </span>
-                        <label className="text-[11px] font-mono font-bold text-emerald-600 hover:underline cursor-pointer flex items-center gap-1">
+                        <label className="text-[11px] font-mono font-bold bg-neutral-900 text-white px-2.5 py-1 rounded-lg hover:bg-neutral-800 cursor-pointer flex items-center gap-1 transition-colors">
                           <Upload className="w-3 h-3" />
-                          <span>{uploadingBannerField === 'photoTopLeft' ? 'Uploading...' : 'Upload File'}</span>
+                          <span>{uploadingBannerField === 'photoTopLeft' ? 'Uploading...' : 'Upload Photo'}</span>
                           <input
                             type="file"
                             accept="image/*"
@@ -1667,7 +1641,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </label>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="w-16 h-20 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
+                        <div className="w-20 h-24 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
                           {bannerForm.photoTopLeft ? (
                             <img
                               src={bannerForm.photoTopLeft}
@@ -1675,18 +1649,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400">No Image</div>
+                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400 font-mono">No Image</div>
                           )}
                         </div>
-                        <input
-                          type="text"
-                          value={bannerForm.photoTopLeft || ''}
-                          onChange={(e) =>
-                            setBannerForm({ ...bannerForm, photoTopLeft: e.target.value })
-                          }
-                          className="w-full px-3 py-2 bg-white border border-neutral-200 rounded-xl text-xs font-mono"
-                          placeholder="Image URL or upload file"
-                        />
+                        {bannerForm.photoTopLeft && (
+                          <button
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, photoTopLeft: '' })}
+                            className="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg border border-red-200 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1696,9 +1670,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <span className="text-xs font-mono font-bold text-neutral-800 uppercase">
                           Photo 2: Bottom Left
                         </span>
-                        <label className="text-[11px] font-mono font-bold text-emerald-600 hover:underline cursor-pointer flex items-center gap-1">
+                        <label className="text-[11px] font-mono font-bold bg-neutral-900 text-white px-2.5 py-1 rounded-lg hover:bg-neutral-800 cursor-pointer flex items-center gap-1 transition-colors">
                           <Upload className="w-3 h-3" />
-                          <span>{uploadingBannerField === 'photoBottomLeft' ? 'Uploading...' : 'Upload File'}</span>
+                          <span>{uploadingBannerField === 'photoBottomLeft' ? 'Uploading...' : 'Upload Photo'}</span>
                           <input
                             type="file"
                             accept="image/*"
@@ -1708,7 +1682,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </label>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="w-16 h-20 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
+                        <div className="w-20 h-24 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
                           {bannerForm.photoBottomLeft ? (
                             <img
                               src={bannerForm.photoBottomLeft}
@@ -1716,18 +1690,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400">No Image</div>
+                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400 font-mono">No Image</div>
                           )}
                         </div>
-                        <input
-                          type="text"
-                          value={bannerForm.photoBottomLeft || ''}
-                          onChange={(e) =>
-                            setBannerForm({ ...bannerForm, photoBottomLeft: e.target.value })
-                          }
-                          className="w-full px-3 py-2 bg-white border border-neutral-200 rounded-xl text-xs font-mono"
-                          placeholder="Image URL or upload file"
-                        />
+                        {bannerForm.photoBottomLeft && (
+                          <button
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, photoBottomLeft: '' })}
+                            className="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg border border-red-200 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1737,9 +1711,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <span className="text-xs font-mono font-bold text-neutral-800 uppercase">
                           Photo 3: Top Right
                         </span>
-                        <label className="text-[11px] font-mono font-bold text-emerald-600 hover:underline cursor-pointer flex items-center gap-1">
+                        <label className="text-[11px] font-mono font-bold bg-neutral-900 text-white px-2.5 py-1 rounded-lg hover:bg-neutral-800 cursor-pointer flex items-center gap-1 transition-colors">
                           <Upload className="w-3 h-3" />
-                          <span>{uploadingBannerField === 'photoTopRight' ? 'Uploading...' : 'Upload File'}</span>
+                          <span>{uploadingBannerField === 'photoTopRight' ? 'Uploading...' : 'Upload Photo'}</span>
                           <input
                             type="file"
                             accept="image/*"
@@ -1749,7 +1723,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </label>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="w-16 h-20 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
+                        <div className="w-20 h-24 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
                           {bannerForm.photoTopRight ? (
                             <img
                               src={bannerForm.photoTopRight}
@@ -1757,18 +1731,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400">No Image</div>
+                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400 font-mono">No Image</div>
                           )}
                         </div>
-                        <input
-                          type="text"
-                          value={bannerForm.photoTopRight || ''}
-                          onChange={(e) =>
-                            setBannerForm({ ...bannerForm, photoTopRight: e.target.value })
-                          }
-                          className="w-full px-3 py-2 bg-white border border-neutral-200 rounded-xl text-xs font-mono"
-                          placeholder="Image URL or upload file"
-                        />
+                        {bannerForm.photoTopRight && (
+                          <button
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, photoTopRight: '' })}
+                            className="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg border border-red-200 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1778,9 +1752,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <span className="text-xs font-mono font-bold text-neutral-800 uppercase">
                           Photo 4: Bottom Right
                         </span>
-                        <label className="text-[11px] font-mono font-bold text-emerald-600 hover:underline cursor-pointer flex items-center gap-1">
+                        <label className="text-[11px] font-mono font-bold bg-neutral-900 text-white px-2.5 py-1 rounded-lg hover:bg-neutral-800 cursor-pointer flex items-center gap-1 transition-colors">
                           <Upload className="w-3 h-3" />
-                          <span>{uploadingBannerField === 'photoBottomRight' ? 'Uploading...' : 'Upload File'}</span>
+                          <span>{uploadingBannerField === 'photoBottomRight' ? 'Uploading...' : 'Upload Photo'}</span>
                           <input
                             type="file"
                             accept="image/*"
@@ -1790,7 +1764,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         </label>
                       </div>
                       <div className="flex items-center gap-3">
-                        <div className="w-16 h-20 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
+                        <div className="w-20 h-24 bg-neutral-200 rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300">
                           {bannerForm.photoBottomRight ? (
                             <img
                               src={bannerForm.photoBottomRight}
@@ -1798,18 +1772,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400">No Image</div>
+                            <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400 font-mono">No Image</div>
                           )}
                         </div>
-                        <input
-                          type="text"
-                          value={bannerForm.photoBottomRight || ''}
-                          onChange={(e) =>
-                            setBannerForm({ ...bannerForm, photoBottomRight: e.target.value })
-                          }
-                          className="w-full px-3 py-2 bg-white border border-neutral-200 rounded-xl text-xs font-mono"
-                          placeholder="Image URL or upload file"
-                        />
+                        {bannerForm.photoBottomRight && (
+                          <button
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, photoBottomRight: '' })}
+                            className="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg border border-red-200 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1857,19 +1831,58 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-mono font-bold text-neutral-600 uppercase mb-1">
-                        Luxury Video URL (.mp4)
-                      </label>
-                      <input
-                        type="text"
-                        value={bannerForm.luxuryVideoUrl || ''}
-                        onChange={(e) =>
-                          setBannerForm({ ...bannerForm, luxuryVideoUrl: e.target.value })
-                        }
-                        className="w-full px-3.5 py-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono"
-                        placeholder="https://cdn.phototourl.com/...mp4"
-                      />
+                    <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-mono font-bold text-neutral-800 uppercase">
+                          Luxury Video or Photo
+                        </label>
+                        <label className="text-xs font-mono font-bold bg-neutral-900 text-white px-3 py-1.5 rounded-xl hover:bg-neutral-800 cursor-pointer flex items-center gap-1.5 transition-colors">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{uploadingBannerField === 'luxuryVideoUrl' ? 'Uploading Media...' : 'Upload from Device'}</span>
+                          <input
+                            type="file"
+                            accept="video/*,image/*"
+                            onChange={(e) => handleUploadBannerPhoto('luxuryVideoUrl', e)}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+
+                      {bannerForm.luxuryVideoUrl ? (
+                        <div className="flex items-center gap-3">
+                          <div className="w-36 h-20 bg-black rounded-xl overflow-hidden flex-shrink-0 border border-neutral-300 relative">
+                            {bannerForm.luxuryVideoUrl.includes('.mp4') || bannerForm.luxuryVideoUrl.includes('video') ? (
+                              <video
+                                src={bannerForm.luxuryVideoUrl}
+                                autoPlay
+                                loop
+                                muted
+                                playsInline
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <img
+                                src={bannerForm.luxuryVideoUrl}
+                                alt="Luxury Media"
+                                className="w-full h-full object-cover"
+                              />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, luxuryVideoUrl: '' })}
+                            className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-xl border border-red-200 transition-colors"
+                          >
+                            Remove Media
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="py-4 text-center border-2 border-dashed border-neutral-200 rounded-xl">
+                          <p className="text-xs text-neutral-400 font-mono">
+                            No media uploaded yet. Click &quot;Upload from Device&quot; to choose a video or picture.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1950,6 +1963,176 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         placeholder="MADE IN NEPAL"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* 5. 3-Line Menu Category Buttons Configuration */}
+                <div className="bg-white p-5 sm:p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="w-4 h-4 text-neutral-800" />
+                      <div>
+                        <h3 className="font-bold text-sm text-neutral-900">
+                          3-Line Menu Category Buttons (Tees, Hoodie, All, etc.)
+                        </h3>
+                        <p className="text-xs text-neutral-500">
+                          Configure the buttons that appear when shoppers click the 3-line menu in the navigation bar.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBannerForm((prev) => ({
+                            ...prev,
+                            navButtons: DEFAULT_NAV_BUTTONS,
+                          }));
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-mono text-neutral-500 hover:text-neutral-900 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
+                      >
+                        Reset Defaults
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newBtn: CustomNavButton = {
+                            id: `btn_${Date.now()}`,
+                            label: 'New Button',
+                            category: 'ALL',
+                            isActive: true,
+                          };
+                          setBannerForm((prev) => ({
+                            ...prev,
+                            navButtons: [...(prev.navButtons || DEFAULT_NAV_BUTTONS), newBtn],
+                          }));
+                        }}
+                        className="px-3 py-1.5 bg-black text-white hover:bg-neutral-800 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Button</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {((bannerForm.navButtons && bannerForm.navButtons.length > 0)
+                      ? bannerForm.navButtons
+                      : DEFAULT_NAV_BUTTONS
+                    ).map((btn, idx, arr) => (
+                      <div
+                        key={btn.id || idx}
+                        className="p-3.5 bg-neutral-50 border border-neutral-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                          {/* Order arrows */}
+                          <div className="flex flex-col gap-0.5">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => {
+                                const list = [...(bannerForm.navButtons || DEFAULT_NAV_BUTTONS)];
+                                const temp = list[idx];
+                                list[idx] = list[idx - 1];
+                                list[idx - 1] = temp;
+                                setBannerForm((prev) => ({ ...prev, navButtons: list }));
+                              }}
+                              className="p-1 text-neutral-400 hover:text-neutral-800 disabled:opacity-20 hover:bg-neutral-200 rounded"
+                              title="Move Up"
+                            >
+                              <ArrowUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === arr.length - 1}
+                              onClick={() => {
+                                const list = [...(bannerForm.navButtons || DEFAULT_NAV_BUTTONS)];
+                                const temp = list[idx];
+                                list[idx] = list[idx + 1];
+                                list[idx + 1] = temp;
+                                setBannerForm((prev) => ({ ...prev, navButtons: list }));
+                              }}
+                              className="p-1 text-neutral-400 hover:text-neutral-800 disabled:opacity-20 hover:bg-neutral-200 rounded"
+                              title="Move Down"
+                            >
+                              <ArrowDown className="w-3 h-3" />
+                            </button>
+                          </div>
+
+                          {/* Active Switch */}
+                          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={btn.isActive !== false}
+                              onChange={(e) => {
+                                const list = [...(bannerForm.navButtons || DEFAULT_NAV_BUTTONS)];
+                                list[idx] = { ...list[idx], isActive: e.target.checked };
+                                setBannerForm((prev) => ({ ...prev, navButtons: list }));
+                              }}
+                              className="w-4 h-4 rounded text-black focus:ring-0 cursor-pointer"
+                            />
+                            <span className="text-[11px] font-mono text-neutral-500">
+                              {btn.isActive !== false ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </label>
+                        </div>
+
+                        {/* Inputs */}
+                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
+                          <div>
+                            <label className="block text-[10px] font-mono font-bold text-neutral-500 uppercase mb-0.5">
+                              Button Display Label
+                            </label>
+                            <input
+                              type="text"
+                              value={btn.label}
+                              onChange={(e) => {
+                                const list = [...(bannerForm.navButtons || DEFAULT_NAV_BUTTONS)];
+                                list[idx] = { ...list[idx], label: e.target.value };
+                                setBannerForm((prev) => ({ ...prev, navButtons: list }));
+                              }}
+                              placeholder="e.g. Tees, Hoodie, All"
+                              className="w-full px-3 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs font-bold"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-mono font-bold text-neutral-500 uppercase mb-0.5">
+                              Target Category Filter
+                            </label>
+                            <select
+                              value={btn.category}
+                              onChange={(e) => {
+                                const list = [...(bannerForm.navButtons || DEFAULT_NAV_BUTTONS)];
+                                list[idx] = { ...list[idx], category: e.target.value as any };
+                                setBannerForm((prev) => ({ ...prev, navButtons: list }));
+                              }}
+                              className="w-full px-3 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs font-mono font-bold"
+                            >
+                              <option value="ALL">ALL (All Collections)</option>
+                              <option value="T-SHIRTS">T-SHIRTS (Tees / Tops)</option>
+                              <option value="HOODIES">HOODIES (Hoodies / Sweatshirts)</option>
+                              <option value="OUTERWEAR">OUTERWEAR (Jackets / Coats)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Delete Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const list = (bannerForm.navButtons || DEFAULT_NAV_BUTTONS).filter((_, i) => i !== idx);
+                            setBannerForm((prev) => ({ ...prev, navButtons: list }));
+                          }}
+                          className="p-2 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors self-end sm:self-center"
+                          title="Remove button"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </form>
@@ -2129,10 +2312,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           const updated = isSelected
                             ? currentSizes.filter((s) => s !== size)
                             : [...currentSizes, size];
+                          const newSizes = updated.length ? updated : [size];
                           setEditingProduct({
                             ...editingProduct,
-                            sizes: updated.length ? updated : [size],
+                            sizes: newSizes,
                           });
+                          // Ensure stock entry exists for newly added sizes
+                          if (!isSelected && typeof editingProductStock[size] !== 'number') {
+                            setEditingProductStock((prev) => ({ ...prev, [size]: 20 }));
+                          }
                         }}
                         className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold border transition-colors ${
                           isSelected
@@ -2147,15 +2335,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              {/* Product Images (Upload file + Direct URL input) */}
+              {/* Stock Quantity for each Selected Size */}
+              <div className="p-4 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-mono font-bold text-neutral-800 uppercase">
+                    Stock Quantity per Size *
+                  </label>
+                  <span className="text-[11px] text-neutral-500 font-mono">
+                    Automatically updates on order
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {(editingProduct.sizes && editingProduct.sizes.length > 0
+                    ? editingProduct.sizes
+                    : ['S', 'M', 'L', 'XL']
+                  ).map((size) => (
+                    <div
+                      key={size}
+                      className="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-neutral-200"
+                    >
+                      <span className="text-xs font-mono font-bold text-neutral-900">{size}</span>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          value={editingProductStock[size] ?? 20}
+                          onChange={(e) => {
+                            const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                            setEditingProductStock((prev) => ({
+                              ...prev,
+                              [size]: val,
+                            }));
+                          }}
+                          className="w-16 px-2 py-1 text-xs font-mono font-bold text-right bg-neutral-50 border border-neutral-200 rounded-lg focus:bg-white focus:border-black outline-none"
+                        />
+                        <span className="text-[10px] text-neutral-400 font-mono">pcs</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Product Images (Upload from Device / Gallery only) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-mono font-bold text-neutral-600 uppercase">
-                    Product Images ({productImagesInput.length})
+                    Product Pictures ({productImagesInput.length})
                   </label>
-                  <label className="text-[11px] font-mono font-bold text-emerald-600 hover:underline cursor-pointer flex items-center gap-1">
-                    <Upload className="w-3 h-3" />
-                    <span>{isUploadingImage ? 'Uploading...' : 'Upload Image File'}</span>
+                  <label className="text-xs font-mono font-bold bg-neutral-900 text-white px-3 py-1.5 rounded-xl hover:bg-neutral-800 cursor-pointer flex items-center gap-1.5 transition-colors">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{isUploadingImage ? 'Uploading Picture...' : 'Upload from Device'}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -2164,30 +2393,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       className="hidden"
                     />
                   </label>
-                </div>
-
-                {/* Direct URL input bar */}
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={directImageUrlInput}
-                    onChange={(e) => setDirectImageUrlInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddDirectImageUrl();
-                      }
-                    }}
-                    className="flex-1 px-3 py-2 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-mono"
-                    placeholder="Paste direct image URL (https://...)"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddDirectImageUrl}
-                    className="px-3.5 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-xl text-xs font-semibold font-mono"
-                  >
-                    + Add URL
-                  </button>
                 </div>
 
                 {/* Images list / thumbnails with reordering */}
@@ -2225,9 +2430,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-neutral-400 font-mono italic">
-                    No images added yet. Upload a file or paste an image URL above.
-                  </p>
+                  <div className="p-6 text-center border-2 border-dashed border-neutral-200 rounded-2xl bg-neutral-50/50">
+                    <p className="text-xs text-neutral-400 font-mono">
+                      No pictures added yet. Click &quot;Upload from Device&quot; to choose pictures from your gallery.
+                    </p>
+                  </div>
                 )}
               </div>
 
@@ -2420,6 +2627,87 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <span>TOTAL AMOUNT:</span>
                 <span>Rs. {selectedOrderDetails.totalAmount?.toLocaleString()}</span>
               </div>
+            </div>
+
+            {/* Payment & Screenshot Verification */}
+            <div className="p-4 bg-neutral-50 rounded-2xl space-y-2 border border-neutral-200/70">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono font-bold text-neutral-800">
+                  Payment: {selectedOrderDetails.paymentMethod}
+                </span>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-neutral-200 text-neutral-800">
+                  {selectedOrderDetails.paymentStatus || 'VERIFIED'}
+                </span>
+              </div>
+
+              {(selectedOrderDetails.uploadedReceipt || selectedOrderDetails.paymentScreenshot) ? (
+                <div className="pt-2 flex items-center gap-3">
+                  <img
+                    src={selectedOrderDetails.uploadedReceipt || selectedOrderDetails.paymentScreenshot || ''}
+                    alt="Receipt"
+                    onClick={() =>
+                      setViewingReceiptUrl(
+                        selectedOrderDetails.uploadedReceipt || selectedOrderDetails.paymentScreenshot || null
+                      )
+                    }
+                    className="w-16 h-16 object-cover rounded-xl border border-neutral-300 cursor-pointer hover:opacity-80 transition-opacity"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setViewingReceiptUrl(
+                        selectedOrderDetails.uploadedReceipt || selectedOrderDetails.paymentScreenshot || null
+                      )
+                    }
+                    className="text-xs font-mono font-bold text-emerald-700 hover:underline"
+                  >
+                    Click to view full payment screenshot &rarr;
+                  </button>
+                </div>
+              ) : (
+                <p className="text-[11px] font-mono text-neutral-500 italic">
+                  {selectedOrderDetails.paymentMethod === 'COD'
+                    ? 'Cash on Delivery — Payment collected upon handover.'
+                    : 'No payment screenshot attached.'}
+                </p>
+              )}
+            </div>
+
+            {/* Order Status Updater & WhatsApp Chat Action */}
+            <div className="pt-2 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-xs font-mono font-bold text-neutral-700">
+                  Order Status:
+                </label>
+                <select
+                  value={selectedOrderDetails.status}
+                  onChange={(e) =>
+                    handleUpdateOrderStatus(
+                      selectedOrderDetails.id,
+                      e.target.value as OrderItem['status']
+                    )
+                  }
+                  className="px-3 py-1.5 rounded-xl text-xs font-mono font-bold border border-neutral-300 bg-white"
+                >
+                  <option value="PENDING_VERIFICATION">Pending Verification</option>
+                  <option value="PROCESSING">Processing</option>
+                  <option value="DISPATCHED">Dispatched</option>
+                  <option value="DELIVERED">Delivered</option>
+                  <option value="CANCELLED">Cancelled (Restore Stock)</option>
+                </select>
+              </div>
+
+              <a
+                href={`https://wa.me/${selectedOrderDetails.phoneNumber.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(
+                  selectedOrderDetails.fullName
+                )},%20this%20is%20NANGSAL%20APPAREL%20regarding%20your%20order%20%23${selectedOrderDetails.id.slice(0, 8)}.`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold font-mono flex items-center justify-center gap-2 transition-colors shadow-sm"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>Chat with Customer on WhatsApp</span>
+              </a>
             </div>
           </div>
         </div>

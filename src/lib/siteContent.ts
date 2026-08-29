@@ -11,11 +11,11 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
-import { Product, SiteBannerContent } from '../types';
+import { Product, SiteBannerContent, CustomNavButton } from '../types';
 import { PRODUCTS as INITIAL_PRODUCTS_SEED } from '../data/products';
 import { purgeStaleCaches } from './cacheManager';
 
-export type { SiteBannerContent, Product };
+export type { SiteBannerContent, Product, CustomNavButton };
 
 /**
  * Extracts a reliable numeric or string version/timestamp from banner data.
@@ -81,6 +81,16 @@ export function getCacheBustedUrl(url?: string, version?: string | number): stri
 }
 
 /**
+ * Default 3-Line Menu Category Buttons
+ */
+export const DEFAULT_NAV_BUTTONS: CustomNavButton[] = [
+  { id: 'btn_all', label: 'All', category: 'ALL', isActive: true },
+  { id: 'btn_tees', label: 'Tees', category: 'T-SHIRTS', isActive: true },
+  { id: 'btn_hoodie', label: 'Hoodie', category: 'HOODIES', isActive: true },
+  { id: 'btn_outerwear', label: 'Outerwear', category: 'OUTERWEAR', isActive: true },
+];
+
+/**
  * Default Master Site Content
  */
 export const DEFAULT_SITE_CONTENT: SiteBannerContent = {
@@ -101,6 +111,7 @@ export const DEFAULT_SITE_CONTENT: SiteBannerContent = {
   photoTopRight: 'https://plain-apac-prod-public.komododecks.com/202608/22/xp2eVM6QVxfw36pmyjmc/image.jpg',
   photoBottomRight: 'https://cdn.phototourl.com/member/2026-08-21-0631b430-57b1-47ee-a854-03cce897b928.jpg',
   announcementText: 'NEW DROP LIVE NOW.',
+  navButtons: DEFAULT_NAV_BUTTONS,
   version: 1,
 };
 
