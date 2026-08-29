@@ -80,6 +80,13 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     e.preventDefault();
     if (isSubmitting) return;
 
+    for (const item of cart) {
+      if (item.quantity > 5) {
+        alert(`Maximum 5 units allowed per product per order. ${item.product.name} exceeds this limit.`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setSubmitError(null);
 

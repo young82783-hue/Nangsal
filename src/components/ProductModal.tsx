@@ -97,13 +97,37 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     }
   };
 
+  const handleIncreaseQty = () => {
+    if (quantity >= 5) {
+      alert('Maximum 5 units allowed per product per order.');
+      return;
+    }
+    setQuantity((q) => Math.min(5, q + 1));
+  };
+
   const handleAdd = () => {
+    if (product.inStock === false || (availableSizes && availableSizes.length === 0)) {
+      alert('This product is currently out of stock.');
+      return;
+    }
+    if (quantity > 5) {
+      alert('Maximum 5 units allowed per product per order.');
+      return;
+    }
     onAddToCart(product, selectedSize, quantity);
     setAddedSuccess(true);
     setTimeout(() => setAddedSuccess(false), 2000);
   };
 
   const handleBuyNowClick = () => {
+    if (product.inStock === false || (availableSizes && availableSizes.length === 0)) {
+      alert('This product is currently out of stock.');
+      return;
+    }
+    if (quantity > 5) {
+      alert('Maximum 5 units allowed per product per order.');
+      return;
+    }
     if (onBuyNow) {
       onBuyNow(product, selectedSize, quantity);
     } else {
@@ -152,29 +176,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 referrerPolicy="no-referrer"
               />
 
-              {/* Left & Right Chevron Navigation Controls */}
-              {safeImages.length > 1 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handlePrevImage}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/90 hover:bg-white text-black flex items-center justify-center shadow-md border border-neutral-200/80 transition-transform active:scale-90 z-20"
-                    title="Previous Image"
-                    aria-label="Previous image"
-                  >
-                    <ChevronLeft className="w-5 h-5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleNextImage}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/90 hover:bg-white text-black flex items-center justify-center shadow-md border border-neutral-200/80 transition-transform active:scale-90 z-20"
-                    title="Next Image"
-                    aria-label="Next image"
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
-                </>
-              )}
+
             </div>
 
             {/* Thumbnail Gallery Underneath Main Image */}
@@ -270,7 +272,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => setQuantity((q) => q + 1)}
+                  onClick={handleIncreaseQty}
                   className="text-neutral-500 hover:text-black font-extrabold text-base leading-none select-none px-1"
                   aria-label="Increase quantity"
                 >
@@ -335,28 +337,36 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
             {/* Primary Action Buttons: ADD TO BAG & BUY IT NOW */}
             <div className="space-y-3 pt-6 border-t border-neutral-100">
-              <button
-                type="button"
-                onClick={handleAdd}
-                className="w-full bg-black hover:bg-neutral-900 text-white font-mono text-xs uppercase tracking-widest py-4 font-bold transition-all active:scale-[0.99] flex items-center justify-center gap-2 rounded-none"
-              >
-                {addedSuccess ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span>ADDED TO BAG!</span>
-                  </>
-                ) : (
-                  <span>ADD TO BAG</span>
-                )}
-              </button>
+              {product.inStock === false || (availableSizes && availableSizes.length === 0) ? (
+                <div className="w-full bg-neutral-200 text-neutral-600 font-mono text-xs uppercase tracking-widest py-4 font-bold text-center">
+                  OUT OF STOCK
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleAdd}
+                    className="w-full bg-black hover:bg-neutral-900 text-white font-mono text-xs uppercase tracking-widest py-4 font-bold transition-all active:scale-[0.99] flex items-center justify-center gap-2 rounded-none"
+                  >
+                    {addedSuccess ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>ADDED TO BAG!</span>
+                      </>
+                    ) : (
+                      <span>ADD TO BAG</span>
+                    )}
+                  </button>
 
-              <button
-                type="button"
-                onClick={handleBuyNowClick}
-                className="w-full bg-white hover:bg-neutral-50 text-black border border-black font-mono text-xs uppercase tracking-widest py-4 font-bold transition-all active:scale-[0.99] flex items-center justify-center rounded-none"
-              >
-                BUY IT NOW
-              </button>
+                  <button
+                    type="button"
+                    onClick={handleBuyNowClick}
+                    className="w-full bg-white hover:bg-neutral-50 text-black border border-black font-mono text-xs uppercase tracking-widest py-4 font-bold transition-all active:scale-[0.99] flex items-center justify-center rounded-none"
+                  >
+                    BUY IT NOW
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

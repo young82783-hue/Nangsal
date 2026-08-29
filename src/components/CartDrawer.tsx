@@ -129,7 +129,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           {item.quantity}
                         </span>
                         <button
-                          onClick={() => onUpdateQuantity(idx, item.quantity + 1)}
+                          onClick={() => {
+                            if (item.quantity >= 5) {
+                              alert('Maximum 5 units allowed per product per order.');
+                              return;
+                            }
+                            onUpdateQuantity(idx, item.quantity + 1);
+                          }}
                           className="px-2 py-0.5 text-xs font-bold hover:bg-neutral-100 rounded-r-lg font-mono"
                         >
                           +

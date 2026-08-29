@@ -70,46 +70,18 @@ const ProductCard: React.FC<ProductCardProps> = ({
           referrerPolicy="no-referrer"
         />
 
-        {/* Carousel Arrows on Hover */}
-        {safeImages.length > 1 && (
-          <div className="absolute inset-0 flex items-center justify-between p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              type="button"
-              onClick={handlePrevImage}
-              className="w-7 h-7 rounded-full bg-white/90 hover:bg-white text-black flex items-center justify-center shadow-sm border border-neutral-200 transition-all"
-              title="Previous Image"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={handleNextImage}
-              className="w-7 h-7 rounded-full bg-white/90 hover:bg-white text-black flex items-center justify-center shadow-sm border border-neutral-200 transition-all"
-              title="Next Image"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
+
+
+        {/* Out of Stock Badge Overlay */}
+        {(product.inStock === false || (Array.isArray(product.availableSizes) && product.availableSizes.length === 0)) && (
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px] flex items-center justify-center z-10 pointer-events-none">
+            <span className="bg-black text-white font-mono text-[10px] sm:text-xs font-bold tracking-widest uppercase px-3 py-1.5 shadow-lg">
+              OUT OF STOCK
+            </span>
           </div>
         )}
 
-        {/* Image Dots Indicator overlay inside container */}
-        {safeImages.length > 1 && (
-          <div className="absolute bottom-2.5 left-0 right-0 flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {safeImages.map((imgUrl, idx) => (
-              <button
-                type="button"
-                key={`${product.productId || product.id}-dot-${idx}-${imgUrl}`}
-                onClick={(e) => handleDotClick(idx, e)}
-                className={`h-1 rounded-full transition-all ${
-                  activeIndex === idx
-                    ? 'w-3 bg-black'
-                    : 'w-1 bg-black/30 hover:bg-black/60'
-                }`}
-                title={`Go to image ${idx + 1}`}
-              />
-            ))}
-          </div>
-        )}
+
       </div>
 
       {/* Product Details */}

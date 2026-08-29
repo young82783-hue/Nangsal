@@ -37,19 +37,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [isShopMenuOpen, setIsShopMenuOpen] = useState(false);
   const [isMenuDropdownOpen, setIsMenuDropdownOpen] = useState(false);
-  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
-
-  // Prevent background scrolling when mobile drawer is open
-  useEffect(() => {
-    if (isMobileDrawerOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [isMobileDrawerOpen]);
 
   // Active buttons list (from admin site content or default fallback)
   const buttonsToDisplay = (navButtons && navButtons.length > 0
@@ -66,7 +53,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
     setIsShopMenuOpen(false);
     setIsMenuDropdownOpen(false);
-    setIsMobileDrawerOpen(false);
     
     setTimeout(() => {
       if (targetId === 'top') {
@@ -95,16 +81,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div id="main-nav" className="max-w-7xl mx-auto px-4 sm:px-6 h-14 sm:h-16 flex items-center justify-between md:grid md:grid-cols-3">
         {/* Left Column: Mobile Menu Toggle & Brand Logo */}
         <div className="flex items-center justify-start gap-2.5 sm:gap-3">
-          {/* Mobile Slide-in Drawer Hamburger Button */}
-          <button
-            id="mobile-nav-toggle"
-            onClick={() => setIsMobileDrawerOpen(true)}
-            className="md:hidden p-1.5 -ml-1 text-black hover:text-[#D85A38] rounded-lg hover:bg-neutral-100 transition-colors active:scale-95"
-            aria-label="Open Navigation Menu"
-          >
-            <Menu className="w-5 h-5 stroke-[2]" />
-          </button>
-
           <a
             href="#"
             onClick={(e) => {
@@ -299,172 +275,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       </div>
-
-      {/* =================================================================== */}
-      {/* SMOOTH SLIDE-IN MOBILE NAVIGATION DRAWER */}
-      {/* =================================================================== */}
-      {isMobileDrawerOpen && (
-        <div className="fixed inset-0 z-50 md:hidden flex">
-          {/* Backdrop Overlay */}
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-300 animate-in fade-in"
-            onClick={() => setIsMobileDrawerOpen(false)}
-            aria-hidden="true"
-          />
-
-          {/* Drawer Container (Smooth Slide-In from Left) */}
-          <div
-            id="mobile-nav-drawer"
-            className="relative w-[85%] max-w-sm bg-white h-full shadow-2xl flex flex-col justify-between z-10 transform transition-transform duration-300 ease-out animate-in slide-in-from-left"
-          >
-            {/* Drawer Header */}
-            <div className="p-5 border-b border-neutral-100 flex items-center justify-between">
-              <img
-                src="https://i.ibb.co/Fb2vYJTL/nangsal-logo-transparent-1.png"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = "/src/assets/images/brand_logo_transparent.png";
-                }}
-                alt="NANGSAL APPAREL"
-                className="h-8 w-auto object-contain"
-                referrerPolicy="no-referrer"
-              />
-              <button
-                onClick={() => setIsMobileDrawerOpen(false)}
-                className="p-2 -mr-1 rounded-full text-neutral-500 hover:text-black hover:bg-neutral-100 transition-colors"
-                aria-label="Close Navigation Menu"
-              >
-                <X className="w-5 h-5 stroke-[2]" />
-              </button>
-            </div>
-
-            {/* Drawer Body Links & Categories */}
-            <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
-              {/* Search Bar in Mobile Menu */}
-              <button
-                onClick={() => {
-                  setIsMobileDrawerOpen(false);
-                  onOpenSearch();
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-neutral-50 hover:bg-neutral-100 text-neutral-500 rounded-2xl text-xs font-mono border border-neutral-200 transition-colors text-left"
-              >
-                <Search className="w-4 h-4 text-neutral-400" />
-                <span>Search collection or products...</span>
-              </button>
-
-              {/* Collections / Categories Section */}
-              <div className="space-y-2">
-                <p className="text-[10px] font-mono font-bold tracking-[0.25em] text-neutral-400 uppercase">
-                  Collections
-                </p>
-                <div className="grid grid-cols-1 gap-1.5">
-                  {buttonsToDisplay.map((btn) => {
-                    const isSelected = activeCategory === btn.category;
-                    return (
-                      <button
-                        key={btn.id}
-                        onClick={() => handleCategoryClick(btn.category, 'products')}
-                        className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-mono font-bold uppercase tracking-wider transition-colors ${
-                          isSelected
-                            ? 'bg-black text-white'
-                            : 'bg-neutral-50 hover:bg-neutral-100 text-neutral-900 border border-neutral-100'
-                        }`}
-                      >
-                        <span>{btn.label}</span>
-                        <ArrowRight className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-neutral-400'}`} />
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Navigation Pages Section */}
-              <div className="space-y-2 pt-2 border-t border-neutral-100">
-                <p className="text-[10px] font-mono font-bold tracking-[0.25em] text-neutral-400 uppercase">
-                  Information &amp; Policies
-                </p>
-                <div className="space-y-1 font-mono text-xs uppercase tracking-wider">
-                  <button
-                    onClick={() => {
-                      setIsMobileDrawerOpen(false);
-                      if (onNavigateHome) onNavigateHome();
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-neutral-50 text-neutral-800 font-bold"
-                  >
-                    Home
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsMobileDrawerOpen(false);
-                      onOpenTerms();
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-neutral-50 text-neutral-700"
-                  >
-                    Terms &amp; Conditions
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsMobileDrawerOpen(false);
-                      if (onNavigateExchange) onNavigateExchange();
-                      else onOpenHelp();
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-neutral-50 text-neutral-700"
-                  >
-                    Exchange Policy
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsMobileDrawerOpen(false);
-                      if (onNavigatePrivacy) onNavigatePrivacy();
-                      else onOpenHelp();
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-neutral-50 text-neutral-700"
-                  >
-                    Privacy Policy
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsMobileDrawerOpen(false);
-                      onOpenHelp();
-                    }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-neutral-50 text-neutral-700"
-                  >
-                    Contact &amp; Help Desk
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Drawer Footer: WhatsApp Support & Social */}
-            <div className="p-5 border-t border-neutral-100 bg-neutral-50/70 space-y-3">
-              <a
-                href="https://wa.me/9779847459808?text=Hello%20Nangsal%20Apparel,%20I%20have%20an%20inquiry%20regarding%20an%20order."
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-mono font-bold uppercase tracking-wider transition-colors shadow-sm"
-              >
-                <MessageCircle className="w-4 h-4" />
-                <span>WhatsApp Hotline</span>
-              </a>
-
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider">
-                  BY NANGSAL - NEPAL
-                </span>
-                <a
-                  href="https://www.instagram.com/by_nangsal?igsi=aWpldjB4anIwd3gz"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 rounded-full hover:bg-neutral-200 text-neutral-600"
-                  aria-label="Instagram"
-                >
-                  <Instagram className="w-4 h-4" />
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 };

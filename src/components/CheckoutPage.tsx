@@ -225,6 +225,13 @@ _Please verify my order in the Admin System and confirm the dispatch schedule. T
       return;
     }
 
+    for (const item of cart) {
+      if (item.quantity > 5) {
+        setSubmitError(`Maximum 5 units allowed per product per order. ${item.product.name} exceeds this limit.`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setSubmitError(null);
 
