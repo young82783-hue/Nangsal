@@ -77,7 +77,7 @@ function checkIsAdminRoute(): boolean {
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
   const search = window.location.search.toLowerCase();
-  return path.includes('admin') || hash.includes('admin') || search.includes('admin=true');
+  return path === '/admin' || path.startsWith('/admin/') || path.includes('admin') || hash.includes('admin') || search.includes('admin=true');
 }
 
 export default function App() {
@@ -112,6 +112,20 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [currency, setCurrency] = useState('NPR');
+
+  const handleOpenAdmin = () => {
+    setIsAdminOpen(true);
+    if (typeof window !== 'undefined' && window.location.pathname !== '/admin') {
+      window.history.pushState({ page: 'admin' }, '', '/admin');
+    }
+  };
+
+  const handleCloseAdmin = () => {
+    setIsAdminOpen(false);
+    if (typeof window !== 'undefined' && checkIsAdminRoute()) {
+      window.history.pushState({}, '', '/');
+    }
+  };
 
   // Purge any stale caches and legacy storage keys immediately on application startup
   useEffect(() => {
@@ -360,6 +374,7 @@ export default function App() {
         onNavigatePrivacy={() => navigateTo('privacy')}
         onNavigateExchange={() => navigateTo('exchange')}
         onNavigateContact={() => navigateTo('contact')}
+        onOpenAdmin={handleOpenAdmin}
       />
 
       {/* Interactive Quick View Product Modal */}
@@ -401,22 +416,14 @@ export default function App() {
         onClose={() => setIsHelpOpen(false)}
       />
 
-      {/* Admin Control Desk Modal - Accessible exclusively via direct URL (e.g. domain/admin or domain/#admin) */}
+      {/* Admin Control Desk Modal - Accessible exclusively via direct URL (/admin) */}
       <AdminPanel
         isOpen={isAdminOpen}
-        onClose={() => {
-          setIsAdminOpen(false);
-          if (typeof window !== 'undefined' && checkIsAdminRoute()) {
-            window.history.pushState({}, '', '/');
-          }
-        }}
+        onClose={handleCloseAdmin}
         siteContent={siteContent || DEFAULT_SITE_CONTENT}
         products={liveProducts}
         onNavigateHome={() => {
-          setIsAdminOpen(false);
-          if (typeof window !== 'undefined' && checkIsAdminRoute()) {
-            window.history.pushState({}, '', '/');
-          }
+          handleCloseAdmin();
           navigateTo('home');
         }}
       />

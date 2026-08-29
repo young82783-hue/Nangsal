@@ -9,6 +9,7 @@ interface FooterProps {
   onNavigatePrivacy?: () => void;
   onNavigateExchange?: () => void;
   onNavigateContact?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
@@ -18,6 +19,7 @@ export const Footer: React.FC<FooterProps> = ({
   onNavigatePrivacy,
   onNavigateExchange,
   onNavigateContact,
+  onOpenAdmin,
 }) => {
   const handleContactClick = onNavigateContact || onOpenHelp;
   return (
@@ -83,6 +85,15 @@ export const Footer: React.FC<FooterProps> = ({
               >
                 Contact
               </button>
+
+              {onOpenAdmin && (
+                <button
+                  onClick={onOpenAdmin}
+                  className="hover:text-black transition-colors cursor-pointer opacity-75 hover:opacity-100"
+                >
+                  Admin
+                </button>
+              )}
             </nav>
 
             {/* Social Media Icons Only */}
