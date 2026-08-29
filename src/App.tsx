@@ -374,7 +374,6 @@ export default function App() {
         onNavigatePrivacy={() => navigateTo('privacy')}
         onNavigateExchange={() => navigateTo('exchange')}
         onNavigateContact={() => navigateTo('contact')}
-        onOpenAdmin={handleOpenAdmin}
       />
 
       {/* Interactive Quick View Product Modal */}
